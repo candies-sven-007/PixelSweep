@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { ScannedItem, formatBytes } from "../types";
+import { ScannedItem, formatBytes, getDomainShortLabel } from "../types";
 import { PixelShieldAlertIcon } from "./PixelIcons";
 import { CheckIcon, WinCloseIcon } from "./UiIcons";
 
@@ -36,6 +36,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({
     [approvedItems]
   );
 
+  const protectedItems = useMemo(
+    () => approvedItems.filter((it) => it.recommendation === "protect" || it.domain === "life" || it.domain === "work"),
+    [approvedItems]
+  );
+
   const totalBytes = useMemo(
     () => approvedItems.reduce((acc, it) => acc + it.size_bytes, 0),
     [approvedItems]
@@ -59,9 +64,9 @@ export const AuditModal: React.FC<AuditModalProps> = ({
               <PixelShieldAlertIcon size={22} />
             </div>
             <div>
-              <h3>清理前安全审视与权限确认</h3>
+              <h3>清理前智能安全审视与权限确认</h3>
               <p className="muted-text">
-                请逐项核对待清理目标；涉及系统级目录或永久删除时需手动确认授权。
+                请逐项核对待清理目标；涉及系统级目录、个人生活/工作资产或永久删除时会触发警报。
               </p>
             </div>
           </div>
@@ -70,15 +75,19 @@ export const AuditModal: React.FC<AuditModalProps> = ({
           </button>
         </div>
 
-        {(elevatedItems.length > 0 || mode === "permanent") && (
-          <div className={`alarm-banner ${mode === "permanent" ? "alarm-danger" : "alarm-warn"}`}>
+        {(elevatedItems.length > 0 || protectedItems.length > 0 || mode === "permanent") && (
+          <div className={`alarm-banner ${mode === "permanent" || protectedItems.length > 0 ? "alarm-danger" : "alarm-warn"}`}>
             <strong>
-              {elevatedItems.length > 0
+              {protectedItems.length > 0
+                ? `个人资产保护警报：清单包含 ${protectedItems.length} 项【生活回忆 / 工作文档】文件`
+                : elevatedItems.length > 0
                 ? `系统权限警报：清单包含 ${elevatedItems.length} 项系统级路径`
                 : "不可逆操作警报：当前已选择【直接彻底删除】"}
             </strong>
             <p>
-              {elevatedItems.length > 0
+              {protectedItems.length > 0
+                ? "智能分析识别到您手动勾选了照片、生活记录或工作学习资料。请务必确认不再需要后再放行，或取消勾选以保留。"
+                : elevatedItems.length > 0
                 ? "部分目标位于系统目录（如 Windows\\Temp、更新缓存或 /Library 系统区），清理需要管理员或完全磁盘访问权限。请务必审视下方清单后再放行。"
                 : "直接彻底删除将绕过系统回收站/废纸篓，文件删除后无法恢复。若不确定，建议切换回「移入回收站」。"}
             </p>
@@ -109,7 +118,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
             待清理清单：<strong>{approvedItems.length}</strong> 项，预计释放{" "}
             <strong>{formatBytes(totalBytes)}</strong>
           </span>
-          <span className="muted-text">可随时点击取消勾选不需要删除的项目</span>
+          <span className="muted-text">点击任一行可随时取消勾选</span>
         </div>
 
         <div className="audit-list">
@@ -127,12 +136,16 @@ export const AuditModal: React.FC<AuditModalProps> = ({
                 <div className="audit-row-main">
                   <div className="audit-row-top">
                     <span className="audit-name">{it.name}</span>
+                    <span className="ext-badge">{getDomainShortLabel(it.domain)}</span>
                     {(it.requires_privilege || it.risk_level === "elevated") && (
                       <span className="priv-badge">需系统权限</span>
                     )}
+                    {it.recommendation === "protect" && (
+                      <span className="protect-warn-badge">个人资产</span>
+                    )}
                   </div>
                   <span className="audit-path" title={it.path}>
-                    {it.path}
+                    {it.ai_reason} · {it.path}
                   </span>
                 </div>
                 <span className="audit-size">{formatBytes(it.size_bytes)}</span>
@@ -142,14 +155,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({
         </div>
 
         <div className="audit-confirm-checks">
-          <div
-            className="confirm-check"
-            onClick={() => setHasReviewed((v) => !v)}
-          >
+          <div className="confirm-check" onClick={() => setHasReviewed((v) => !v)}>
             <span className={`apple-check sm ${hasReviewed ? "checked" : ""}`}>
               {hasReviewed && <CheckIcon size={10} />}
             </span>
-            <span>我已审视以上文件清单与权限报警，同意对已勾选项目执行清理操作。</span>
+            <span>我已审视以上文件清单、智能分类提示与权限报警，同意执行清理操作。</span>
           </div>
 
           {mode === "permanent" && (

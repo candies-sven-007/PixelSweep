@@ -2088,3 +2088,262 @@ html, body, #root {
   border-radius: 50%;
   flex-shrink: 0;
 }
+
+
+/* =========================================================
+   v1.3.0 TRUE APPLE ROUNDED FLOATING CHASSIS & DUAL-EDGE GLASS BEZELS
+   ========================================================= */
+.window-outer {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+/* Windows 10 unmaximized: genuine rounded corners + crisp double glass rim + soft floating shadow */
+.window-outer.is-floating {
+  padding: 12px;
+}
+
+.window-outer.is-docked {
+  padding: 0;
+}
+
+.app-shell {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+}
+
+.theme-dark.app-shell {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.app-shell.rounded-chassis {
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  box-shadow:
+    0 20px 44px rgba(10, 18, 36, 0.24),
+    0 4px 14px rgba(10, 18, 36, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.88);
+}
+
+.theme-dark.app-shell.rounded-chassis {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 24px 54px rgba(0, 0, 0, 0.56),
+    0 4px 16px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* Refined Dual-Edge Borders on Inner Glass Cards (eliminates washed-out flat white edges) */
+.theme-light .sidebar-section,
+.theme-light .hero-panel,
+.theme-light .blueprint-stage,
+.theme-light .storage-bar-card,
+.theme-light .results-toolbar,
+.theme-light .acc-card,
+.theme-light .music-dock {
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow:
+    0 8px 24px rgba(15, 32, 68, 0.055),
+    0 1px 2px rgba(15, 32, 68, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+
+.theme-light .blueprint-card {
+  border-color: rgba(15, 23, 42, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+/* Fix v1.2 Disk Card Flex Collapse Bug & Add Hover Pill */
+.disk-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  gap: 5px;
+}
+
+.disk-card.clickable-disk {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.14s ease;
+}
+
+.disk-card.clickable-disk:hover:not(.disk-disabled) {
+  background: var(--glass-inner);
+  border-color: rgba(10, 132, 255, 0.22);
+  transform: translateY(-0.5px);
+}
+
+.disk-card.disk-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.disk-top {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.disk-top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.disk-scan-hint {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(10, 132, 255, 0.12);
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.disk-card.clickable-disk:hover .disk-scan-hint {
+  opacity: 1;
+}
+
+.disk-bar {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--slider-track);
+  overflow: hidden;
+}
+
+/* Fix Hero Subtitle 2-line clean wrap instead of awkward mid-sentence ellipsis */
+.stage-sub {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.48;
+}
+
+/* Smart Protected Risk Pill & Recommendation Badges */
+.risk-protected {
+  background: rgba(249, 115, 22, 0.15);
+  color: #ea580c;
+}
+
+.theme-dark .risk-protected {
+  color: #fb923c;
+}
+
+.score-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.score-good {
+  background: rgba(16, 185, 129, 0.16);
+  color: #059669;
+}
+
+.score-mid {
+  background: rgba(245, 158, 11, 0.18);
+  color: #d97706;
+}
+
+.score-low {
+  background: rgba(239, 68, 68, 0.16);
+  color: #dc2626;
+}
+
+.theme-dark .score-good { color: #34d399; }
+.theme-dark .score-mid { color: #fbbf24; }
+.theme-dark .score-low { color: #f87171; }
+
+.smart-rec-btn {
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.13);
+  color: #059669;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3.5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.theme-dark .smart-rec-btn {
+  color: #34d399;
+}
+
+.smart-rec-btn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  transform: translateY(-0.5px);
+}
+
+.storage-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pending-size-pill {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.item-ai-reason {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rec-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.rec-recommend {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+}
+
+.rec-review {
+  background: rgba(99, 102, 241, 0.14);
+  color: #4f46e5;
+}
+
+.rec-protect {
+  background: rgba(249, 115, 22, 0.15);
+  color: #ea580c;
+}
+
+.theme-dark .rec-recommend { color: #34d399; }
+.theme-dark .rec-review { color: #818cf8; }
+.theme-dark .rec-protect { color: #fb923c; }
+
+.protect-warn-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1.5px 6px;
+  border-radius: 5px;
+  background: rgba(239, 68, 68, 0.16);
+  color: #dc2626;
+  flex-shrink: 0;
+}

@@ -12,10 +12,19 @@ export interface SystemStatus {
   arch: string;
   is_elevated: boolean;
   has_full_disk_access: boolean;
+  window_chrome: "floating" | "native" | string;
   default_music_dir: string | null;
   disks: DiskSummary[];
   permission_warnings: string[];
 }
+
+export type SmartDomain =
+  | "junk"
+  | "dev_cache"
+  | "entertainment"
+  | "life"
+  | "work"
+  | "system_elevated";
 
 export interface ScannedItem {
   path: string;
@@ -24,15 +33,21 @@ export interface ScannedItem {
   is_dir: boolean;
   modified_ts: number;
   category_id: string;
-  risk_level: "safe" | "caution" | "elevated" | string;
+  domain: SmartDomain | string;
+  recommendation: "recommend" | "review" | "protect" | string;
+  ai_reason: string;
+  risk_level: "safe" | "caution" | "protected" | "elevated" | string;
   requires_privilege: boolean;
 }
 
 export interface ScanCategoryResult {
   id: string;
+  domain: SmartDomain | string;
   name: string;
+  subtitle: string;
   description: string;
-  risk_level: "safe" | "caution" | "elevated" | string;
+  risk_level: "safe" | "caution" | "protected" | "elevated" | string;
+  recommendation: "recommend" | "review" | "protect" | string;
   requires_privilege: boolean;
   default_selected: boolean;
   root_paths: string[];
@@ -42,8 +57,21 @@ export interface ScanCategoryResult {
   items: ScannedItem[];
 }
 
+export interface SmartSummary {
+  scope_label: string;
+  health_score: number;
+  headline: string;
+  reclaimable_bytes: number;
+  reclaimable_items: number;
+  entertainment_bytes: number;
+  life_bytes: number;
+  work_bytes: number;
+  system_bytes: number;
+}
+
 export interface FullScanResult {
   categories: ScanCategoryResult[];
+  summary: SmartSummary;
   total_bytes: number;
   total_items: number;
   total_denied: number;
@@ -107,22 +135,26 @@ export function formatRelativeTime(unixSec: number): string {
   return `${Math.floor(days / 365)}年前`;
 }
 
-export function getCategoryColor(catId: string, riskLevel: string): string {
+export function getCategoryColor(domain: string): string {
   const palette: Record<string, string> = {
-    win_user_temp: "#10b981",
-    mac_user_caches: "#10b981",
-    win_browser_cache: "#0ea5e9",
-    mac_user_logs: "#0ea5e9",
-    win_shader_dev_cache: "#6366f1",
-    mac_dev_caches: "#6366f1",
-    win_crash_dumps: "#8b5cf6",
-    win_system_temp: "#f59e0b",
-    mac_system_caches: "#f59e0b",
-    large_files: "#ec4899",
-    custom_scan: "#14b8a6",
+    junk: "#10b981",            // Emerald — Safe waste to sweep
+    dev_cache: "#6366f1",       // Indigo — Rebuildable caches
+    entertainment: "#ec4899",   // Rose/Pink — Games, movies, music
+    life: "#f97316",            // Warm Orange — Photos & personal memories
+    work: "#0ea5e9",            // Sky Blue — Documents & code projects
+    system_elevated: "#f59e0b", // Amber — System privilege area
   };
-  if (palette[catId]) return palette[catId];
-  if (riskLevel === "elevated") return "#f59e0b";
-  if (riskLevel === "caution") return "#6366f1";
-  return "#10b981";
+  return palette[domain] ?? "#0a84ff";
+}
+
+export function getDomainShortLabel(domain: string): string {
+  const labels: Record<string, string> = {
+    junk: "无用废物",
+    dev_cache: "软件缓存",
+    entertainment: "娱乐影音",
+    life: "生活回忆",
+    work: "工作学习",
+    system_elevated: "系统权限",
+  };
+  return labels[domain] ?? domain;
 }

@@ -1,16 +1,26 @@
 import React, { useMemo, useState } from "react";
-import { ScanCategoryResult, formatBytes, getCategoryColor } from "../types";
+import {
+  ScanCategoryResult,
+  SmartSummary,
+  formatBytes,
+  getCategoryColor,
+  getDomainShortLabel,
+} from "../types";
 
 interface StorageBreakdownBarProps {
   categories: ScanCategoryResult[];
+  summary: SmartSummary | null;
   selectedPaths: Record<string, boolean>;
   onFocusCategory: (catId: string) => void;
+  onSmartSelectRecommended: () => void;
 }
 
 export const StorageBreakdownBar: React.FC<StorageBreakdownBarProps> = ({
   categories,
+  summary,
   selectedPaths,
   onFocusCategory,
+  onSmartSelectRecommended,
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -42,25 +52,53 @@ export const StorageBreakdownBar: React.FC<StorageBreakdownBarProps> = ({
     <div className="storage-bar-card">
       <div className="storage-bar-head">
         <div className="storage-head-left">
-          <span className="storage-title">扫描空间分布</span>
-          <span className="storage-sub">
+          {summary && (
+            <span
+              className={`score-badge ${
+                summary.health_score >= 85
+                  ? "score-good"
+                  : summary.health_score >= 65
+                  ? "score-mid"
+                  : "score-low"
+              }`}
+            >
+              整洁度 {summary.health_score}
+            </span>
+          )}
+          <span className="storage-title">
+            {summary?.scope_label || "智能语义空间分布"}
+          </span>
+          <span className="storage-sub" title={summary?.headline || ""}>
             {hoveredCat
               ? `${hoveredCat.name} · ${formatBytes(hoveredCat.total_bytes)} (${Math.max(
                   1,
                   Math.round((hoveredCat.total_bytes / totalBytes) * 100)
                 )}%)`
-              : `共发现 ${formatBytes(totalBytes)}，点击色块可快速定位展开`}
+              : summary?.headline || `共分析 ${formatBytes(totalBytes)}`}
           </span>
         </div>
+
         <div className="storage-head-right">
-          待释放 <strong>{formatBytes(selectedBytes)}</strong>
+          {summary && summary.reclaimable_bytes > 0 && (
+            <button
+              type="button"
+              className="smart-rec-btn"
+              onClick={onSmartSelectRecommended}
+              title="自动仅勾选无用废物、旧安装包与过期缓存，绝不触碰生活/工作资料"
+            >
+              智能勾选建议清理 ({formatBytes(summary.reclaimable_bytes)})
+            </button>
+          )}
+          <span className="pending-size-pill">
+            已选 <strong>{formatBytes(selectedBytes)}</strong>
+          </span>
         </div>
       </div>
 
       <div className="apple-segment-track">
         {nonZeroCats.map((cat) => {
           const pct = (cat.total_bytes / totalBytes) * 100;
-          const color = getCategoryColor(cat.id, cat.risk_level);
+          const color = getCategoryColor(cat.domain);
           const isHovered = hoveredId === cat.id;
           return (
             <button
@@ -68,7 +106,7 @@ export const StorageBreakdownBar: React.FC<StorageBreakdownBarProps> = ({
               type="button"
               className={`apple-segment-slice ${isHovered ? "slice-active" : ""}`}
               style={{
-                width: `${Math.max(2.5, pct)}%`,
+                width: `${Math.max(3, pct)}%`,
                 background: color,
               }}
               onMouseEnter={() => setHoveredId(cat.id)}
@@ -82,7 +120,7 @@ export const StorageBreakdownBar: React.FC<StorageBreakdownBarProps> = ({
 
       <div className="storage-legend">
         {nonZeroCats.map((cat) => {
-          const color = getCategoryColor(cat.id, cat.risk_level);
+          const color = getCategoryColor(cat.domain);
           return (
             <button
               key={cat.id}
@@ -93,7 +131,7 @@ export const StorageBreakdownBar: React.FC<StorageBreakdownBarProps> = ({
               onClick={() => onFocusCategory(cat.id)}
             >
               <span className="legend-dot" style={{ background: color }} />
-              <span className="legend-name">{cat.name.split(" ")[0]}</span>
+              <span className="legend-name">{getDomainShortLabel(cat.domain)}</span>
               <span className="legend-size">{formatBytes(cat.total_bytes)}</span>
             </button>
           );

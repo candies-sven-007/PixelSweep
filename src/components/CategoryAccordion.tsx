@@ -57,7 +57,10 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
     let list = category.items;
     if (q) {
       list = list.filter(
-        (it) => it.name.toLowerCase().includes(q) || it.path.toLowerCase().includes(q)
+        (it) =>
+          it.name.toLowerCase().includes(q) ||
+          it.path.toLowerCase().includes(q) ||
+          it.ai_reason.toLowerCase().includes(q)
       );
     }
     const sorted = [...list];
@@ -86,10 +89,19 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
     [filteredItems]
   );
 
-  const accentColor = getCategoryColor(category.id, category.risk_level);
+  const accentColor = getCategoryColor(category.domain);
   const sharePct =
     grandTotalBytes > 0 ? Math.min(100, Math.round((category.total_bytes / grandTotalBytes) * 100)) : 0;
   const shownItems = filteredItems.slice(0, visibleLimit);
+
+  const riskLabel =
+    category.risk_level === "safe"
+      ? "建议清理"
+      : category.risk_level === "protected"
+      ? "默认保护"
+      : category.risk_level === "elevated"
+      ? "系统权限项"
+      : "按需审视";
 
   return (
     <div
@@ -97,7 +109,6 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
       className={`acc-card ${isExpanded ? "acc-open" : ""}`}
       style={{ "--cat-accent": accentColor } as React.CSSProperties}
     >
-      {/* Header Row */}
       <div className="acc-header" onClick={onToggleExpand}>
         <span className="acc-color-rail" style={{ background: accentColor }} />
 
@@ -115,25 +126,21 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
           {someChecked && <MinusIcon size={11} />}
         </button>
 
-        <div className="acc-icon-pill" style={{ background: `${accentColor}20`, color: accentColor }}>
+        <div className="acc-icon-pill" style={{ background: `${accentColor}1f`, color: accentColor }}>
           <FolderVectorIcon size={16} />
         </div>
 
         <div className="acc-main">
           <div className="acc-title-line">
             <span className="acc-title">{category.name}</span>
-            <span className={`risk-pill risk-${category.risk_level}`}>
-              {category.risk_level === "safe"
-                ? "安全缓存"
-                : category.risk_level === "elevated"
-                ? "系统权限项"
-                : "需人工审核"}
-            </span>
+            <span className={`risk-pill risk-${category.risk_level}`}>{riskLabel}</span>
             {category.denied_count > 0 && (
               <span className="denied-pill">{category.denied_count} 项受限</span>
             )}
           </div>
-          <p className="acc-desc">{category.description}</p>
+          <p className="acc-desc" title={category.description}>
+            {category.subtitle} · {category.description}
+          </p>
         </div>
 
         <div className="acc-right">
@@ -157,13 +164,12 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
         </div>
       </div>
 
-      {/* Smooth Animated Collapsible Body */}
       <div className="acc-collapse-outer">
         <div className="acc-collapse-inner">
           <div className="acc-body">
             <div className="acc-subbar">
               <div className="roots-chips">
-                <span className="roots-label">来源目录</span>
+                <span className="roots-label">识别来源</span>
                 {category.root_paths.slice(0, 2).map((rp) => (
                   <span key={rp} className="root-chip" title={rp}>
                     {rp}
@@ -193,7 +199,7 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
               <div className="acc-empty">
                 {searchQuery.trim()
                   ? "当前搜索关键词下无匹配项"
-                  : "该分类下非常干净，暂未发现可清理内容"}
+                  : "该语义分区下暂无发现大体积或可清理文件"}
               </div>
             ) : (
               <div className="acc-items-scroll">
@@ -235,10 +241,18 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                           </span>
                           <span className="ext-badge">{badge}</span>
                           {relTime && <span className="time-pill">{relTime}</span>}
+                          <span className={`rec-pill rec-${it.recommendation}`}>
+                            {it.recommendation === "recommend"
+                              ? "建议清理"
+                              : it.recommendation === "protect"
+                              ? "建议保留"
+                              : "按需审视"}
+                          </span>
                           {it.requires_privilege && (
                             <span className="priv-badge">需系统权限</span>
                           )}
                         </div>
+                        <div className="item-ai-reason">{it.ai_reason}</div>
                         <div className="item-path-text" title={it.path}>
                           {it.path}
                         </div>

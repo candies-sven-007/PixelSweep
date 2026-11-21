@@ -12,6 +12,7 @@ import {
   ScanCategoryResult,
   ScanProgressPayload,
   ScannedItem,
+  SmartSummary,
   SystemStatus,
   formatBytes,
 } from "./types";
@@ -38,48 +39,48 @@ import {
   WinMinIcon,
 } from "./components/UiIcons";
 
-const PREVIEW_MODULES = [
+const SMART_BLUEPRINT = [
   {
-    title: "用户临时与安装包残留",
-    tag: "安全缓存",
+    title: "无用废物与冗余残留",
+    tag: "建议清理",
     risk: "safe",
     color: "#10b981",
-    desc: "深度排查系统 Temp 与应用临时解压目录，不影响个人文档。",
+    desc: "自动侦测系统临时碎片、残留安装包、未完成下载、重复副本与浏览器网页缓存。",
   },
   {
-    title: "主流浏览器网页缓存",
-    tag: "安全缓存",
-    risk: "safe",
-    color: "#0ea5e9",
-    desc: "清理 Chrome / Edge / Brave / Firefox 静态缓存，保留书签与密码。",
-  },
-  {
-    title: "显卡着色器与开发缓存",
-    tag: "需人工审核",
+    title: "软件与开发构建缓存",
+    tag: "按需审视",
     risk: "caution",
     color: "#6366f1",
-    desc: "定位 DirectX / NVIDIA / Xcode / npm / pnpm / pip / uv / Cargo 冗余缓存。",
+    desc: "识别显卡着色器、过期 node_modules/target 依赖及 npm/pip/Cargo/Xcode 缓存。",
   },
   {
-    title: "崩溃转储与诊断日志",
-    tag: "安全缓存",
-    risk: "safe",
-    color: "#8b5cf6",
-    desc: "回收程序异常闪退生成的 .dmp 转储文件与陈旧诊断报告。",
+    title: "娱乐、影音与游戏区",
+    tag: "按需审视",
+    risk: "caution",
+    color: "#ec4899",
+    desc: "智能归类高清电影番剧、游戏资源包、本地音乐与电子书，看完的大视频可按需瘦身。",
   },
   {
-    title: "系统根目录与更新缓存",
+    title: "生活、照片与个人回忆",
+    tag: "默认保护",
+    risk: "protected",
+    color: "#f97316",
+    desc: "识别相册原图、生活录像与微信/QQ 个人文件，自动上锁防误删，清晰呈现空间占比。",
+  },
+  {
+    title: "工作、学习与创作项目",
+    tag: "默认保护",
+    risk: "protected",
+    color: "#0ea5e9",
+    desc: "自动归类办公文档、课件资料、设计剪辑工程与代码目录，盘点空间的同时严防误删。",
+  },
+  {
+    title: "系统权限区与更新缓存",
     tag: "系统权限项",
     risk: "elevated",
     color: "#f59e0b",
-    desc: "涉及 C:\\Windows\\Temp 或 /Library 系统区，清理前强制报警审核。",
-  },
-  {
-    title: "大文件深度雷达 (>100MB)",
-    tag: "需人工审核",
-    risk: "caution",
-    color: "#ec4899",
-    desc: "揪出下载目录与桌面沉睡的大型安装包、镜像与压缩包，默认不勾选。",
+    desc: "覆盖 Windows\\Temp、更新缓存与 macOS /Library 系统区，清理前强制报警审核。",
   },
 ];
 
@@ -88,21 +89,23 @@ const LIFETIME_KEY = "pixelsweep_lifetime_freed_bytes";
 export const App: React.FC = () => {
   const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [isMaximized, setIsMaximized] = useState(false);
   const [mood, setMood] = useState<CharacterMood>("idle");
   const [isPlayingMusic, setIsPlayingMusic] = useState(false);
 
-  // Scan & filter state
+  // Scan & smart filter state
   const [isScanning, setIsScanning] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgressPayload | null>(null);
   const [cleanProgress, setCleanProgress] = useState<CleanProgressPayload | null>(null);
   const [categories, setCategories] = useState<ScanCategoryResult[]>([]);
+  const [smartSummary, setSmartSummary] = useState<SmartSummary | null>(null);
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>({});
   const [cleanMode, setCleanMode] = useState<"recycle" | "permanent">("recycle");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"size" | "name">("size");
-  const [riskFilter, setRiskFilter] = useState<"all" | "safe" | "elevated" | "caution">("all");
+  const [domainFilter, setDomainFilter] = useState<string>("all");
 
   // Modal & Reports
   const [showAuditModal, setShowAuditModal] = useState(false);
@@ -119,7 +122,7 @@ export const App: React.FC = () => {
 
   const showToast = useCallback((msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg((prev) => (prev === msg ? null : prev)), 4200);
+    setTimeout(() => setToastMsg((prev) => (prev === msg ? null : prev)), 4400);
   }, []);
 
   const refreshSystem = useCallback(async () => {
@@ -139,7 +142,7 @@ export const App: React.FC = () => {
       setMusicDir(dir);
       setTracks(list);
     } catch {
-      // Silent on startup if Music dir doesn't exist
+      // Built-in cozy synth takes over when Music folder is empty
     }
   }, []);
 
@@ -147,6 +150,13 @@ export const App: React.FC = () => {
     refreshSystem();
     loadMusic();
 
+    const win = getCurrentWindow();
+    const syncMax = () => {
+      win.isMaximized().then(setIsMaximized).catch(() => {});
+    };
+    syncMax();
+
+    const unlistenResize = win.onResized(syncMax);
     const unlistenScan = listen<ScanProgressPayload>("scan-progress", (e) => {
       setScanProgress(e.payload);
     });
@@ -155,6 +165,7 @@ export const App: React.FC = () => {
     });
 
     return () => {
+      unlistenResize.then((f) => f()).catch(() => {});
       unlistenScan.then((f) => f());
       unlistenClean.then((f) => f());
     };
@@ -168,33 +179,41 @@ export const App: React.FC = () => {
     });
   };
 
+  const applyScanResult = (res: FullScanResult) => {
+    setCategories(res.categories);
+    setSmartSummary(res.summary);
+    setDomainFilter("all");
+
+    // Smart auto-select ONLY explicitly recommended waste/junk items
+    const nextSelected: Record<string, boolean> = {};
+    for (const cat of res.categories) {
+      for (const it of cat.items) {
+        if (it.recommendation === "recommend" && !it.requires_privilege) {
+          nextSelected[it.path] = true;
+        }
+      }
+    }
+    setSelectedPaths(nextSelected);
+
+    const firstNonEmpty = res.categories.find((c) => c.items.length > 0) ?? res.categories[0];
+    if (firstNonEmpty) {
+      setExpandedMap({ [firstNonEmpty.id]: true });
+    }
+  };
+
   const handleFullScan = async () => {
     if (isScanning || isCleaning) return;
     setIsScanning(true);
     setLastReport(null);
-    setRiskFilter("all");
     setMood("scanning");
     try {
       const res = await invoke<FullScanResult>("start_full_scan");
-      setCategories(res.categories);
-      const nextSelected: Record<string, boolean> = {};
-      for (const cat of res.categories) {
-        if (cat.default_selected) {
-          for (const it of cat.items) {
-            nextSelected[it.path] = true;
-          }
-        }
-      }
-      setSelectedPaths(nextSelected);
-      const firstNonEmpty = res.categories.find((c) => c.items.length > 0) ?? res.categories[0];
-      if (firstNonEmpty) {
-        setExpandedMap({ [firstNonEmpty.id]: true });
-      }
+      applyScanResult(res);
       setMood("idle");
       showToast(
-        `扫描完成：发现 ${res.total_items} 项，共 ${formatBytes(res.total_bytes)}（耗时 ${(
-          res.duration_ms / 1000
-        ).toFixed(1)}s）`
+        `全盘智能盘点完成：识别 ${res.total_items} 项（共 ${formatBytes(
+          res.total_bytes
+        )}），建议清理 ${formatBytes(res.summary.reclaimable_bytes)}`
       );
     } catch (e) {
       setMood("idle");
@@ -204,27 +223,26 @@ export const App: React.FC = () => {
     }
   };
 
-  const scanSpecificPath = async (targetPath: string, minMb = 50) => {
+  const scanSpecificPath = async (targetPath: string, minMb = 10) => {
     if (isScanning || isCleaning) return;
     setIsScanning(true);
+    setLastReport(null);
     setMood("scanning");
     try {
-      const customCat = await invoke<ScanCategoryResult>("scan_custom_folder", {
+      const res = await invoke<FullScanResult>("scan_custom_folder", {
         targetDir: targetPath,
         minSizeMb: minMb,
       });
-      setCategories((prev) => [customCat, ...prev.filter((c) => c.id !== "custom_scan")]);
-      setRiskFilter("all");
-      setExpandedMap((prev) => ({ ...prev, [customCat.id]: true }));
+      applyScanResult(res);
       setMood("idle");
       showToast(
-        `目录扫描完成：发现 ${customCat.item_count} 个大文件（共 ${formatBytes(
-          customCat.total_bytes
+        `已智能剖析 ${targetPath}：共归类 ${res.total_items} 项（${formatBytes(
+          res.total_bytes
         )}）`
       );
     } catch (e) {
       setMood("idle");
-      showToast(`扫描失败: ${String(e)}`);
+      showToast(`剖析失败: ${String(e)}`);
     } finally {
       setIsScanning(false);
     }
@@ -235,10 +253,10 @@ export const App: React.FC = () => {
     const picked = await open({
       directory: true,
       multiple: false,
-      title: "选择要深度排查的磁盘或文件夹",
+      title: "选择要智能语义剖析的磁盘或文件夹",
     });
     if (!picked || typeof picked !== "string") return;
-    await scanSpecificPath(picked, 50);
+    await scanSpecificPath(picked, 5);
   };
 
   const handlePickMusicFolder = async () => {
@@ -258,9 +276,9 @@ export const App: React.FC = () => {
   );
 
   const visibleCategories = useMemo(() => {
-    if (riskFilter === "all") return categories;
-    return categories.filter((c) => c.risk_level === riskFilter);
-  }, [categories, riskFilter]);
+    if (domainFilter === "all") return categories;
+    return categories.filter((c) => c.domain === domainFilter);
+  }, [categories, domainFilter]);
 
   const selectedItems: ScannedItem[] = useMemo(() => {
     const out: ScannedItem[] = [];
@@ -292,15 +310,17 @@ export const App: React.FC = () => {
     setSelectedPaths((prev) => ({ ...prev, [path]: !prev[path] }));
   };
 
-  const selectSafeOnly = () => {
+  const selectRecommendedOnly = () => {
     const next: Record<string, boolean> = {};
     for (const cat of categories) {
-      if (cat.risk_level === "safe") {
-        for (const it of cat.items) next[it.path] = true;
+      for (const it of cat.items) {
+        if (it.recommendation === "recommend" && !it.requires_privilege) {
+          next[it.path] = true;
+        }
       }
     }
     setSelectedPaths(next);
-    showToast("已应用「安全轻扫」方案");
+    showToast("已智能勾选所有「建议清理」废物与残留，个人生活与工作资料已自动跳过");
   };
 
   const clearSelection = () => {
@@ -315,7 +335,7 @@ export const App: React.FC = () => {
   };
 
   const focusCategory = (catId: string) => {
-    setRiskFilter("all");
+    setDomainFilter("all");
     setExpandedMap((prev) => ({ ...prev, [catId]: true }));
     window.setTimeout(() => {
       const el = document.getElementById(`cat-card-${catId}`);
@@ -400,390 +420,405 @@ export const App: React.FC = () => {
   };
 
   const isMac = sysStatus?.os === "macos";
+  const useFloatingFrame = sysStatus?.window_chrome === "floating" && !isMaximized;
 
   const stageTitle = isScanning
-    ? scanProgress?.stage || "正在深度巡检磁盘..."
+    ? scanProgress?.stage || "正在智能语义剖析磁盘..."
     : isCleaning
     ? `正在清扫 (${cleanProgress?.processed ?? 0}/${cleanProgress?.total ?? 0})`
     : lastReport
     ? `本次已释放 ${formatBytes(lastReport.freed_bytes)}`
     : categories.length > 0
     ? `已选 ${selectedItems.length} 项 · 预计释放 ${formatBytes(selectedTotalBytes)}`
-    : "戴上耳机，轻松清扫磁盘空间";
+    : "智能盘点全盘，惬意清扫空间";
 
   const stageSub = isScanning
-    ? scanProgress?.current_path || "放大镜巡检缓存与大文件中..."
+    ? scanProgress?.current_path || "放大镜巡检并区分废物、娱乐、生活与工作区..."
     : isCleaning
     ? cleanProgress?.current_path || "小农夫和森林芽灵正在合力清扫垃圾..."
     : lastReport
     ? `模式：${lastReport.mode === "permanent" ? "直接彻底删除" : "移入系统回收站"} · 成功 ${
         lastReport.deleted_count
       } 项 · 跳过 ${lastReport.skipped_count} 项`
-    : "支持先移入回收站或彻底删除；涉及系统级权限项将在清理前主动报警并等待您审视。";
+    : "自动将文件划分为无用废物、缓存、娱乐、生活回忆与工作项目；个人资产与系统目录默认受保护。";
 
   const win = getCurrentWindow();
 
   return (
-    <div className={`app-shell theme-${theme}`}>
-      {/* Frosted Glass Micro-Grain + Ambient Liquid Orbs */}
-      <div className="ambient-mesh" aria-hidden>
-        <span className="orb orb-1" />
-        <span className="orb orb-2" />
-        <span className="orb orb-3" />
-      </div>
-      <div className="glass-noise-overlay" aria-hidden />
-
-      {/* Unified Translucent Titlebar */}
-      <header className="titlebar" data-tauri-drag-region>
-        <div className={`titlebar-left ${isMac ? "mac-inset" : ""}`} data-tauri-drag-region>
-          <div className="brand-icon-wrap">
-            <PixelBroomIcon size={18} />
-          </div>
-          <span className="brand-name">PixelSweep</span>
-          <span className="brand-badge">v1.2</span>
-          {sysStatus && (
-            <span className="brand-env">
-              {sysStatus.os === "windows" ? "Windows" : "macOS"} · {sysStatus.arch}
-            </span>
-          )}
+    <div className={`window-outer ${useFloatingFrame ? "is-floating" : "is-docked"}`}>
+      <div className={`app-shell theme-${theme} ${useFloatingFrame ? "rounded-chassis" : ""}`}>
+        {/* Ambient Liquid Glass Orbs + Subtle Sandblasted Grain */}
+        <div className="ambient-mesh" aria-hidden>
+          <span className="orb orb-1" />
+          <span className="orb orb-2" />
+          <span className="orb orb-3" />
         </div>
+        <div className="glass-noise-overlay" aria-hidden />
 
-        <div className="titlebar-right">
-          {lifetimeFreed > 0 && (
-            <span className="lifetime-pill" title="累计已清理释放的磁盘空间">
-              累计已释放 <strong>{formatBytes(lifetimeFreed)}</strong>
-            </span>
-          )}
-
-          <button
-            className="glass-chip"
-            onClick={toggleTheme}
-            title="切换浅霜玻璃 / 暗夜磨砂主题"
-          >
-            {theme === "light" ? <SunIcon size={13} /> : <MoonIcon size={13} />}
-            <span>{theme === "light" ? "浅霜玻璃" : "暗夜磨砂"}</span>
-          </button>
-
-          {!isMac && (
-            <div className="win-controls">
-              <button className="win-btn" onClick={() => win.minimize()} title="最小化">
-                <WinMinIcon />
-              </button>
-              <button className="win-btn" onClick={() => win.toggleMaximize()} title="最大化">
-                <WinMaxIcon />
-              </button>
-              <button className="win-btn win-close" onClick={() => win.close()} title="关闭">
-                <WinCloseIcon />
-              </button>
+        {/* Unified Translucent Titlebar */}
+        <header className="titlebar" data-tauri-drag-region>
+          <div className={`titlebar-left ${isMac ? "mac-inset" : ""}`} data-tauri-drag-region>
+            <div className="brand-icon-wrap">
+              <PixelBroomIcon size={18} />
             </div>
-          )}
-        </div>
-      </header>
-
-      {toastMsg && <div className="glass-toast">{toastMsg}</div>}
-
-      {/* Main Split Workspace */}
-      <div className="workspace">
-        {/* Left Apple-Style Translucent Sidebar */}
-        <aside className="sidebar">
-          <div className="sidebar-section">
-            <div className="section-head">
-              <span className="section-label">磁盘空间概览（点击直扫大文件）</span>
-              <button className="tiny-icon-btn" onClick={refreshSystem} title="刷新磁盘容量">
-                <RefreshIcon size={12} />
-              </button>
-            </div>
-            <div className="disk-list">
-              {(sysStatus?.disks ?? []).map((d) => {
-                const pct = Math.min(
-                  100,
-                  Math.round((d.used_bytes / Math.max(1, d.total_bytes)) * 100)
-                );
-                return (
-                  <button
-                    key={d.mount_point}
-                    type="button"
-                    className="disk-card clickable-disk"
-                    disabled={isScanning || isCleaning}
-                    onClick={() => scanSpecificPath(d.mount_point, 100)}
-                    title={`点击排查 ${d.mount_point} 中大于 100MB 的大文件`}
-                  >
-                    <div className="disk-top">
-                      <span className="disk-mount">
-                        <HardDriveIcon size={13} />
-                        <strong>{d.mount_point}</strong>
-                      </span>
-                      <span className={`disk-pct ${pct > 85 ? "pct-high" : ""}`}>{pct}%</span>
-                    </div>
-                    <div className="disk-bar">
-                      <div
-                        className={`disk-fill ${pct > 85 ? "fill-high" : ""}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <div className="disk-meta">
-                      可用 {formatBytes(d.available_bytes)} / 共 {formatBytes(d.total_bytes)}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="sidebar-section">
-            <span className="section-label">权限与安全守卫</span>
-            <div className="perm-card">
-              <div className="perm-row">
-                <span>管理员 / Root</span>
-                <span className={sysStatus?.is_elevated ? "badge-ok" : "badge-warn"}>
-                  {sysStatus?.is_elevated ? "已授权" : "标准用户"}
-                </span>
-              </div>
-              {isMac && (
-                <div className="perm-row">
-                  <span>完全磁盘访问</span>
-                  <span className={sysStatus?.has_full_disk_access ? "badge-ok" : "badge-warn"}>
-                    {sysStatus?.has_full_disk_access ? "已授权" : "未授权"}
-                  </span>
-                </div>
-              )}
-              <button
-                className="btn-glass btn-full"
-                onClick={() => invoke("open_permission_settings")}
-              >
-                <PixelShieldAlertIcon size={15} /> 打开系统权限设置
-              </button>
-            </div>
-          </div>
-
-          <div className="sidebar-section">
-            <span className="section-label">快捷工具</span>
-            <button
-              className="btn-glass btn-full"
-              onClick={handleCustomFolderScan}
-              disabled={isScanning || isCleaning}
-            >
-              <FolderVectorIcon size={14} /> 自定义目录深度扫盘
-            </button>
-            <button
-              className="btn-glass btn-full"
-              onClick={handleEmptyTrash}
-              disabled={isScanning || isCleaning}
-            >
-              <PixelTrashIcon size={15} /> 清空系统回收站 / 废纸篓
-            </button>
-          </div>
-        </aside>
-
-        {/* Right Primary Luminous Frosted Stage */}
-        <main className="main-pane">
-          {sysStatus && sysStatus.permission_warnings.length > 0 && (
-            <div className="sys-warning-strip">
-              <PixelShieldAlertIcon size={17} />
-              <div className="sys-warning-text">{sysStatus.permission_warnings[0]}</div>
-            </div>
-          )}
-
-          {/* Hero Pixel Diorama Panel */}
-          <div className="hero-panel">
-            <PixelFarmerStage
-              mood={mood}
-              theme={theme}
-              isPlayingMusic={isPlayingMusic}
-              statusLine={stageTitle}
-              subLine={stageSub}
-            />
-            <div className="hero-actions">
-              <button
-                className="btn-primary btn-lg"
-                onClick={handleFullScan}
-                disabled={isScanning || isCleaning}
-              >
-                <PixelMagnifierIcon size={17} />
-                <span>{isScanning ? "正在深度扫盘..." : "一键深度扫盘"}</span>
-              </button>
-              <button
-                className="btn-accent btn-lg"
-                onClick={openAuditFlow}
-                disabled={isScanning || isCleaning || selectedItems.length === 0}
-              >
-                <PixelBroomIcon size={17} />
-                <span>审视并清理 ({formatBytes(selectedTotalBytes)})</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Real-time Scan Progress */}
-          {isScanning && scanProgress && (
-            <div className="progress-panel">
-              <div className="progress-track">
-                <div
-                  className="progress-fill"
-                  style={{ width: `${scanProgress.progress_pct}%` }}
-                />
-              </div>
-              <div className="progress-caption">
-                <span>
-                  已发现 <strong>{scanProgress.found_items}</strong> 项 ·{" "}
-                  <strong>{formatBytes(scanProgress.found_bytes)}</strong>
-                </span>
-                <span>{scanProgress.progress_pct}%</span>
-              </div>
-            </div>
-          )}
-
-          {/* Apple macOS Storage-Style Colored Breakdown Bar */}
-          {categories.length > 0 && (
-            <StorageBreakdownBar
-              categories={categories}
-              selectedPaths={selectedPaths}
-              onFocusCategory={focusCategory}
-            />
-          )}
-
-          {/* Filter, Risk Tabs & Accordion Controls */}
-          {categories.length > 0 && (
-            <div className="results-toolbar">
-              <div className="search-input-wrap">
-                <SearchIcon size={13} className="search-icon" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索文件名或路径..."
-                  className="glass-search-input"
-                />
-                {searchQuery && (
-                  <button
-                    className="clear-search-btn"
-                    onClick={() => setSearchQuery("")}
-                    aria-label="清空搜索"
-                  >
-                    <WinCloseIcon size={10} />
-                  </button>
-                )}
-              </div>
-
-              <div className="toolbar-actions">
-                <div className="segmented-control">
-                  {(
-                    [
-                      ["all", "全部"],
-                      ["safe", "安全"],
-                      ["caution", "审核"],
-                      ["elevated", "系统"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <button
-                      key={key}
-                      className={riskFilter === key ? "seg-active" : ""}
-                      onClick={() => setRiskFilter(key)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="segmented-control">
-                  <button
-                    className={sortBy === "size" ? "seg-active" : ""}
-                    onClick={() => setSortBy("size")}
-                  >
-                    按体积
-                  </button>
-                  <button
-                    className={sortBy === "name" ? "seg-active" : ""}
-                    onClick={() => setSortBy("name")}
-                  >
-                    按名称
-                  </button>
-                </div>
-
-                <button className="btn-glass btn-xs" onClick={selectSafeOnly}>
-                  安全轻扫
-                </button>
-                <button className="btn-glass btn-xs" onClick={clearSelection}>
-                  清空
-                </button>
-                <button className="btn-glass btn-xs" onClick={() => setAllExpanded(true)}>
-                  全展
-                </button>
-                <button className="btn-glass btn-xs" onClick={() => setAllExpanded(false)}>
-                  全收
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Categories Accordion List OR Pre-Scan Blueprint */}
-          <div className="categories-wrap">
-            {categories.length === 0 ? (
-              <div className="blueprint-stage">
-                <div className="blueprint-header">
-                  <h3>全盘智能巡检引擎 · 6 大靶向模块</h3>
-                  <p>
-                    点击右上角「一键深度扫盘」全面体检，或直接点击左侧任一磁盘快速揪出大文件；涉及系统级目录均会在清理前触发权限警报与清单审视。
-                  </p>
-                </div>
-                <div className="blueprint-grid">
-                  {PREVIEW_MODULES.map((m) => (
-                    <div key={m.title} className="blueprint-card">
-                      <div className="bp-top">
-                        <span className="bp-title-wrap">
-                          <span className="bp-dot" style={{ background: m.color }} />
-                          <strong>{m.title}</strong>
-                        </span>
-                        <span className={`risk-pill risk-${m.risk}`}>{m.tag}</span>
-                      </div>
-                      <p>{m.desc}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              visibleCategories.map((cat) => (
-                <CategoryAccordion
-                  key={cat.id}
-                  category={cat}
-                  grandTotalBytes={grandTotalBytes}
-                  isExpanded={!!expandedMap[cat.id]}
-                  onToggleExpand={() =>
-                    setExpandedMap((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
-                  }
-                  selectedPaths={selectedPaths}
-                  onToggleCategory={() => toggleCategory(cat)}
-                  onToggleItem={toggleItem}
-                  onReveal={(p) => invoke("reveal_in_explorer", { path: p })}
-                  searchQuery={searchQuery}
-                  sortBy={sortBy}
-                />
-              ))
+            <span className="brand-name">PixelSweep</span>
+            <span className="brand-badge">v1.3 智能版</span>
+            {sysStatus && (
+              <span className="brand-env">
+                {sysStatus.os === "windows" ? "Windows" : "macOS"} · {sysStatus.arch}
+              </span>
             )}
           </div>
-        </main>
-      </div>
 
-      {/* Persistent Apple Music-Inspired Frosted Glass Dock */}
-      <MusicDock
-        musicDir={musicDir}
-        tracks={tracks}
-        onPickMusicFolder={handlePickMusicFolder}
-        onPlayStateChange={setIsPlayingMusic}
-      />
+          <div className="titlebar-right">
+            {lifetimeFreed > 0 && (
+              <span className="lifetime-pill" title="累计已清理释放的磁盘空间">
+                累计已释放 <strong>{formatBytes(lifetimeFreed)}</strong>
+              </span>
+            )}
 
-      {/* Pre-Deletion Security Alarm & Audit Modal */}
-      {showAuditModal && (
-        <AuditModal
-          items={selectedItems}
-          mode={cleanMode}
-          onModeChange={setCleanMode}
-          onCancel={() => {
-            setShowAuditModal(false);
-            setMood("idle");
-          }}
-          onConfirm={handleConfirmedClean}
+            <button
+              className="glass-chip"
+              onClick={toggleTheme}
+              title="切换浅霜玻璃 / 暗夜磨砂主题"
+            >
+              {theme === "light" ? <SunIcon size={13} /> : <MoonIcon size={13} />}
+              <span>{theme === "light" ? "浅霜玻璃" : "暗夜磨砂"}</span>
+            </button>
+
+            {!isMac && (
+              <div className="win-controls">
+                <button className="win-btn" onClick={() => win.minimize()} title="最小化">
+                  <WinMinIcon />
+                </button>
+                <button className="win-btn" onClick={() => win.toggleMaximize()} title="最大化 / 还原">
+                  <WinMaxIcon />
+                </button>
+                <button className="win-btn win-close" onClick={() => win.close()} title="关闭">
+                  <WinCloseIcon />
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        {toastMsg && <div className="glass-toast">{toastMsg}</div>}
+
+        {/* Main Split Workspace */}
+        <div className="workspace">
+          {/* Left Apple-Style Translucent Sidebar */}
+          <aside className="sidebar">
+            <div className="sidebar-section">
+              <div className="section-head">
+                <span className="section-label">磁盘概览 · 点盘智能剖析</span>
+                <button className="tiny-icon-btn" onClick={refreshSystem} title="刷新磁盘容量">
+                  <RefreshIcon size={12} />
+                </button>
+              </div>
+              <div className="disk-list">
+                {(sysStatus?.disks ?? []).map((d) => {
+                  const pct = Math.min(
+                    100,
+                    Math.round((d.used_bytes / Math.max(1, d.total_bytes)) * 100)
+                  );
+                  return (
+                    <div
+                      key={d.mount_point}
+                      role="button"
+                      tabIndex={0}
+                      className={`disk-card clickable-disk ${isScanning || isCleaning ? "disk-disabled" : ""}`}
+                      onClick={() => {
+                        if (!isScanning && !isCleaning) scanSpecificPath(d.mount_point, 15);
+                      }}
+                      onKeyDown={(e) => {
+                        if ((e.key === "Enter" || e.key === " ") && !isScanning && !isCleaning) {
+                          scanSpecificPath(d.mount_point, 15);
+                        }
+                      }}
+                      title={`点击对 ${d.mount_point} 进行智能语义分区剖析`}
+                    >
+                      <div className="disk-top">
+                        <span className="disk-mount">
+                          <HardDriveIcon size={13} />
+                          <strong>{d.mount_point}</strong>
+                        </span>
+                        <span className="disk-top-right">
+                          <span className="disk-scan-hint">智能剖析</span>
+                          <span className={`disk-pct ${pct > 85 ? "pct-high" : ""}`}>{pct}%</span>
+                        </span>
+                      </div>
+                      <div className="disk-bar">
+                        <div
+                          className={`disk-fill ${pct > 85 ? "fill-high" : ""}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="disk-meta">
+                        可用 {formatBytes(d.available_bytes)} / 共 {formatBytes(d.total_bytes)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="sidebar-section">
+              <span className="section-label">权限与安全守卫</span>
+              <div className="perm-card">
+                <div className="perm-row">
+                  <span>管理员 / Root</span>
+                  <span className={sysStatus?.is_elevated ? "badge-ok" : "badge-warn"}>
+                    {sysStatus?.is_elevated ? "已授权" : "标准用户"}
+                  </span>
+                </div>
+                {isMac && (
+                  <div className="perm-row">
+                    <span>完全磁盘访问</span>
+                    <span className={sysStatus?.has_full_disk_access ? "badge-ok" : "badge-warn"}>
+                      {sysStatus?.has_full_disk_access ? "已授权" : "未授权"}
+                    </span>
+                  </div>
+                )}
+                <button
+                  className="btn-glass btn-full"
+                  onClick={() => invoke("open_permission_settings")}
+                >
+                  <PixelShieldAlertIcon size={15} /> 打开系统权限设置
+                </button>
+              </div>
+            </div>
+
+            <div className="sidebar-section">
+              <span className="section-label">快捷工具</span>
+              <button
+                className="btn-glass btn-full"
+                onClick={handleCustomFolderScan}
+                disabled={isScanning || isCleaning}
+              >
+                <FolderVectorIcon size={14} /> 指定目录智能剖析
+              </button>
+              <button
+                className="btn-glass btn-full"
+                onClick={handleEmptyTrash}
+                disabled={isScanning || isCleaning}
+              >
+                <PixelTrashIcon size={15} /> 清空系统回收站 / 废纸篓
+              </button>
+            </div>
+          </aside>
+
+          {/* Right Primary Luminous Frosted Stage */}
+          <main className="main-pane">
+            {sysStatus && sysStatus.permission_warnings.length > 0 && (
+              <div className="sys-warning-strip">
+                <PixelShieldAlertIcon size={17} />
+                <div className="sys-warning-text">{sysStatus.permission_warnings[0]}</div>
+              </div>
+            )}
+
+            {/* Hero Pixel Diorama Panel */}
+            <div className="hero-panel">
+              <PixelFarmerStage
+                mood={mood}
+                theme={theme}
+                isPlayingMusic={isPlayingMusic}
+                statusLine={stageTitle}
+                subLine={stageSub}
+              />
+              <div className="hero-actions">
+                <button
+                  className="btn-primary btn-lg"
+                  onClick={handleFullScan}
+                  disabled={isScanning || isCleaning}
+                >
+                  <PixelMagnifierIcon size={17} />
+                  <span>{isScanning ? "正在智能盘点..." : "一键全盘智能盘点"}</span>
+                </button>
+                <button
+                  className="btn-accent btn-lg"
+                  onClick={openAuditFlow}
+                  disabled={isScanning || isCleaning || selectedItems.length === 0}
+                >
+                  <PixelBroomIcon size={17} />
+                  <span>审视并清理 ({formatBytes(selectedTotalBytes)})</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Real-time Scan Progress */}
+            {isScanning && scanProgress && (
+              <div className="progress-panel">
+                <div className="progress-track">
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${scanProgress.progress_pct}%` }}
+                  />
+                </div>
+                <div className="progress-caption">
+                  <span>
+                    已归类 <strong>{scanProgress.found_items}</strong> 项 ·{" "}
+                    <strong>{formatBytes(scanProgress.found_bytes)}</strong>
+                  </span>
+                  <span>{scanProgress.progress_pct}%</span>
+                </div>
+              </div>
+            )}
+
+            {/* Apple macOS Storage-Style Smart Semantic Breakdown Bar */}
+            {categories.length > 0 && (
+              <StorageBreakdownBar
+                categories={categories}
+                summary={smartSummary}
+                selectedPaths={selectedPaths}
+                onFocusCategory={focusCategory}
+                onSmartSelectRecommended={selectRecommendedOnly}
+              />
+            )}
+
+            {/* Smart Domain Tabs & Search/Sort Toolbar */}
+            {categories.length > 0 && (
+              <div className="results-toolbar">
+                <div className="search-input-wrap">
+                  <SearchIcon size={13} className="search-icon" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="搜文件名、路径或智能诊断..."
+                    className="glass-search-input"
+                  />
+                  {searchQuery && (
+                    <button
+                      className="clear-search-btn"
+                      onClick={() => setSearchQuery("")}
+                      aria-label="清空搜索"
+                    >
+                      <WinCloseIcon size={10} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="toolbar-actions">
+                  <div className="segmented-control">
+                    {(
+                      [
+                        ["all", "全部"],
+                        ["junk", "废物"],
+                        ["dev_cache", "缓存"],
+                        ["entertainment", "娱乐"],
+                        ["life", "生活"],
+                        ["work", "工作"],
+                        ["system_elevated", "系统"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <button
+                        key={key}
+                        className={domainFilter === key ? "seg-active" : ""}
+                        onClick={() => setDomainFilter(key)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="segmented-control">
+                    <button
+                      className={sortBy === "size" ? "seg-active" : ""}
+                      onClick={() => setSortBy("size")}
+                    >
+                      体积
+                    </button>
+                    <button
+                      className={sortBy === "name" ? "seg-active" : ""}
+                      onClick={() => setSortBy("name")}
+                    >
+                      名称
+                    </button>
+                  </div>
+
+                  <button className="btn-glass btn-xs" onClick={clearSelection}>
+                    清空勾选
+                  </button>
+                  <button className="btn-glass btn-xs" onClick={() => setAllExpanded(true)}>
+                    全展
+                  </button>
+                  <button className="btn-glass btn-xs" onClick={() => setAllExpanded(false)}>
+                    全收
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Smart Categories List OR Pre-Scan Blueprint */}
+            <div className="categories-wrap">
+              {categories.length === 0 ? (
+                <div className="blueprint-stage">
+                  <div className="blueprint-header">
+                    <h3>智能文件语义剖析引擎 · 6 大分区维度</h3>
+                    <p>
+                      点击「一键全盘智能盘点」全面诊断，或直接点击左侧任意盘符（C:\ / D:\ / F:\ / G:\）按生活、娱乐、工作与无用废物智能分类；个人高价值文件默认自动保护。
+                    </p>
+                  </div>
+                  <div className="blueprint-grid">
+                    {SMART_BLUEPRINT.map((m) => (
+                      <div key={m.title} className="blueprint-card">
+                        <div className="bp-top">
+                          <span className="bp-title-wrap">
+                            <span className="bp-dot" style={{ background: m.color }} />
+                            <strong>{m.title}</strong>
+                          </span>
+                          <span className={`risk-pill risk-${m.risk}`}>{m.tag}</span>
+                        </div>
+                        <p>{m.desc}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                visibleCategories.map((cat) => (
+                  <CategoryAccordion
+                    key={cat.id}
+                    category={cat}
+                    grandTotalBytes={grandTotalBytes}
+                    isExpanded={!!expandedMap[cat.id]}
+                    onToggleExpand={() =>
+                      setExpandedMap((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
+                    }
+                    selectedPaths={selectedPaths}
+                    onToggleCategory={() => toggleCategory(cat)}
+                    onToggleItem={toggleItem}
+                    onReveal={(p) => invoke("reveal_in_explorer", { path: p })}
+                    searchQuery={searchQuery}
+                    sortBy={sortBy}
+                  />
+                ))
+              )}
+            </div>
+          </main>
+        </div>
+
+        {/* Persistent Apple Music-Inspired Frosted Glass Dock */}
+        <MusicDock
+          musicDir={musicDir}
+          tracks={tracks}
+          onPickMusicFolder={handlePickMusicFolder}
+          onPlayStateChange={setIsPlayingMusic}
         />
-      )}
+
+        {/* Pre-Deletion Security Alarm & Audit Modal */}
+        {showAuditModal && (
+          <AuditModal
+            items={selectedItems}
+            mode={cleanMode}
+            onModeChange={setCleanMode}
+            onCancel={() => {
+              setShowAuditModal(false);
+              setMood("idle");
+            }}
+            onConfirm={handleConfirmedClean}
+          />
+        )}
+      </div>
     </div>
   );
 };

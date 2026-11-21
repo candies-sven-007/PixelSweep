@@ -1,11 +1,15 @@
+mod analyzer;
 mod cleaner;
 mod models;
 mod music;
 mod safety;
 mod scanner;
 
-use models::{CleanReport, FullScanResult, MusicTrack, ScanCategoryResult, SystemStatus};
+use models::{CleanReport, FullScanResult, MusicTrack, SystemStatus};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager, WebviewWindow};
+
+static IS_FLOATING_CHROME: AtomicBool = AtomicBool::new(false);
 
 fn apply_native_glass(window: &WebviewWindow, dark: bool) {
     #[cfg(target_os = "macos")]
@@ -13,18 +17,21 @@ fn apply_native_glass(window: &WebviewWindow, dark: bool) {
         let _ = dark;
         use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
         let _ = apply_vibrancy(window, NSVisualEffectMaterial::HudWindow, None, None);
+        IS_FLOATING_CHROME.store(false, Ordering::Relaxed);
     }
 
     #[cfg(target_os = "windows")]
     {
-        use window_vibrancy::{apply_acrylic, apply_mica};
-        if apply_mica(window, Some(dark)).is_err() {
-            let tint = if dark {
-                Some((18, 22, 34, 200))
-            } else {
-                Some((246, 249, 255, 195))
-            };
-            let _ = apply_acrylic(window, tint);
+        use window_vibrancy::apply_mica;
+        // On Windows 11, Mica + DWM automatically provides native rounded corners & smooth shadow.
+        // On Windows 10, apply_mica returns Err: disable rectangular DWM shadow & avoid square acrylic
+        // so WebView2 renders a true razor-sharp Apple rounded floating glass window with soft shadow!
+        if apply_mica(window, Some(dark)).is_ok() {
+            let _ = window.set_shadow(true);
+            IS_FLOATING_CHROME.store(false, Ordering::Relaxed);
+        } else {
+            let _ = window.set_shadow(false);
+            IS_FLOATING_CHROME.store(true, Ordering::Relaxed);
         }
     }
 
@@ -43,7 +50,7 @@ fn set_window_theme(app: AppHandle, dark: bool) {
 
 #[tauri::command]
 fn get_system_status() -> SystemStatus {
-    scanner::collect_system_status()
+    scanner::collect_system_status(IS_FLOATING_CHROME.load(Ordering::Relaxed))
 }
 
 #[tauri::command]
@@ -58,12 +65,12 @@ async fn scan_custom_folder(
     app: AppHandle,
     target_dir: String,
     min_size_mb: u64,
-) -> Result<ScanCategoryResult, String> {
+) -> Result<FullScanResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         scanner::scan_custom_directory(&app, &target_dir, min_size_mb)
     })
     .await
-    .map_err(|e| format!("自定义扫描线程异常: {}", e))?
+    .map_err(|e| format!("智能剖析线程异常: {}", e))?
 }
 
 #[tauri::command]

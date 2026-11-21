@@ -16,6 +16,7 @@ pub struct SystemStatus {
     pub arch: String,
     pub is_elevated: bool,
     pub has_full_disk_access: bool,
+    pub window_chrome: String, // "floating" (Win10 rounded CSS chassis) | "native" (Win11 Mica / macOS)
     pub default_music_dir: Option<String>,
     pub disks: Vec<DiskSummary>,
     pub permission_warnings: Vec<String>,
@@ -29,16 +30,22 @@ pub struct ScannedItem {
     pub is_dir: bool,
     pub modified_ts: u64,
     pub category_id: String,
-    pub risk_level: String,
+    pub domain: String,         // "junk" | "dev_cache" | "entertainment" | "life" | "work" | "system_elevated"
+    pub recommendation: String, // "recommend" | "review" | "protect"
+    pub ai_reason: String,
+    pub risk_level: String,     // "safe" | "caution" | "protected" | "elevated"
     pub requires_privilege: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanCategoryResult {
     pub id: String,
+    pub domain: String,
     pub name: String,
+    pub subtitle: String,
     pub description: String,
-    pub risk_level: String, // "safe" | "caution" | "elevated"
+    pub risk_level: String,
+    pub recommendation: String,
     pub requires_privilege: bool,
     pub default_selected: bool,
     pub root_paths: Vec<String>,
@@ -49,8 +56,22 @@ pub struct ScanCategoryResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmartSummary {
+    pub scope_label: String,
+    pub health_score: u8,
+    pub headline: String,
+    pub reclaimable_bytes: u64,
+    pub reclaimable_items: usize,
+    pub entertainment_bytes: u64,
+    pub life_bytes: u64,
+    pub work_bytes: u64,
+    pub system_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FullScanResult {
     pub categories: Vec<ScanCategoryResult>,
+    pub summary: SmartSummary,
     pub total_bytes: u64,
     pub total_items: usize,
     pub total_denied: usize,
