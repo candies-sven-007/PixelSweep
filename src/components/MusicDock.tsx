@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { MusicTrack } from "../types";
+import { cozySynth } from "../utils/cozySynth";
 import { PixelMusicIcon } from "./PixelIcons";
 import {
   FolderVectorIcon,
@@ -27,28 +28,43 @@ export const MusicDock: React.FC<MusicDockProps> = ({
   onPlayStateChange,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [sourceMode, setSourceMode] = useState<"local" | "cozy">("local");
   const [currentIdx, setCurrentIdx] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [shuffle, setShuffle] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.75);
+  const [volume, setVolume] = useState(0.72);
   const [showPlaylist, setShowPlaylist] = useState(false);
 
   const currentTrack = tracks[currentIdx] ?? null;
+
+  // Auto-select built-in cozy BGM mode when local music directory is empty
+  useEffect(() => {
+    if (tracks.length === 0) {
+      setSourceMode("cozy");
+    } else {
+      setSourceMode("local");
+    }
+  }, [tracks.length]);
 
   useEffect(() => {
     onPlayStateChange(isPlaying);
   }, [isPlaying, onPlayStateChange]);
 
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = volume;
-    }
+    if (audioRef.current) audioRef.current.volume = volume;
+    cozySynth.setVolume(volume);
   }, [volume]);
 
   useEffect(() => {
-    if (!currentTrack || !audioRef.current) return;
+    return () => {
+      cozySynth.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (sourceMode !== "local" || !currentTrack || !audioRef.current) return;
     const src = convertFileSrc(currentTrack.path);
     if (audioRef.current.src !== src) {
       audioRef.current.src = src;
@@ -56,10 +72,25 @@ export const MusicDock: React.FC<MusicDockProps> = ({
         audioRef.current.play().catch(() => setIsPlaying(false));
       }
     }
-  }, [currentTrack, isPlaying]);
+  }, [sourceMode, currentTrack, isPlaying]);
 
   const togglePlay = () => {
-    if (!audioRef.current || !currentTrack) return;
+    if (sourceMode === "cozy" || !currentTrack) {
+      if (isPlaying) {
+        cozySynth.stop();
+        setIsPlaying(false);
+      } else {
+        audioRef.current?.pause();
+        setSourceMode("cozy");
+        cozySynth.setVolume(volume);
+        cozySynth.start();
+        setIsPlaying(true);
+      }
+      return;
+    }
+
+    if (!audioRef.current) return;
+    cozySynth.stop();
     if (isPlaying) {
       audioRef.current.pause();
       setIsPlaying(false);
@@ -74,8 +105,18 @@ export const MusicDock: React.FC<MusicDockProps> = ({
     }
   };
 
+  const switchToCozy = () => {
+    audioRef.current?.pause();
+    setSourceMode("cozy");
+    cozySynth.setVolume(volume);
+    cozySynth.start();
+    setIsPlaying(true);
+  };
+
   const playIndex = (idx: number) => {
     if (tracks.length === 0) return;
+    cozySynth.stop();
+    setSourceMode("local");
     const safeIdx = (idx + tracks.length) % tracks.length;
     setCurrentIdx(safeIdx);
     setIsPlaying(true);
@@ -88,17 +129,16 @@ export const MusicDock: React.FC<MusicDockProps> = ({
   };
 
   const handleNext = () => {
-    if (tracks.length === 0) return;
+    if (sourceMode === "cozy" || tracks.length === 0) return;
     if (shuffle && tracks.length > 1) {
-      const next = Math.floor(Math.random() * tracks.length);
-      playIndex(next);
+      playIndex(Math.floor(Math.random() * tracks.length));
     } else {
       playIndex(currentIdx + 1);
     }
   };
 
   const handlePrev = () => {
-    if (tracks.length === 0) return;
+    if (sourceMode === "cozy" || tracks.length === 0) return;
     playIndex(currentIdx - 1);
   };
 
@@ -109,7 +149,14 @@ export const MusicDock: React.FC<MusicDockProps> = ({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const progressPct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const isCozy = sourceMode === "cozy" || !currentTrack;
+  const progressPct = isCozy
+    ? isPlaying
+      ? 100
+      : 0
+    : duration > 0
+    ? Math.min(100, (currentTime / duration) * 100)
+    : 0;
   const volPct = Math.round(volume * 100);
 
   return (
@@ -125,7 +172,7 @@ export const MusicDock: React.FC<MusicDockProps> = ({
         <div className="playlist-popover">
           <div className="playlist-header">
             <div className="playlist-title-col">
-              <strong>本地音乐库 ({tracks.length} 首)</strong>
+              <strong>音乐播放源 ({tracks.length} 首本地曲目)</strong>
               <div className="muted-text small-path" title={musicDir || ""}>
                 {musicDir || "未选择本地音乐文件夹"}
               </div>
@@ -135,15 +182,24 @@ export const MusicDock: React.FC<MusicDockProps> = ({
             </button>
           </div>
           <div className="playlist-scroll">
+            <button
+              className={`playlist-item ${isCozy ? "playing" : ""}`}
+              onClick={switchToCozy}
+            >
+              <span className="track-idx">♪</span>
+              <span className="track-name">内置 · 星露谷田园八音盒（无限循环）</span>
+              <span className="track-ext">SYNTH</span>
+            </button>
+
             {tracks.length === 0 ? (
               <div className="empty-playlist">
-                当前音乐目录暂无支持的音频文件（支持 MP3 / FLAC / WAV / M4A / OGG）
+                当前本地音乐目录为空，可直接播放上方内置八音盒，或点击「更换目录」加载本地 MP3 / FLAC / WAV。
               </div>
             ) : (
               tracks.map((t, i) => (
                 <button
                   key={t.path}
-                  className={`playlist-item ${i === currentIdx ? "playing" : ""}`}
+                  className={`playlist-item ${!isCozy && i === currentIdx ? "playing" : ""}`}
                   onClick={() => playIndex(i)}
                 >
                   <span className="track-idx">{String(i + 1).padStart(2, "0")}</span>
@@ -162,13 +218,15 @@ export const MusicDock: React.FC<MusicDockProps> = ({
             <PixelMusicIcon size={18} />
           </div>
           <div className="music-meta">
-            <div className="music-title" title={currentTrack?.title || "点击右侧选择本地音乐文件夹"}>
-              {currentTrack ? currentTrack.title : "暂无本地音乐 · 点击加载"}
+            <div className="music-title">
+              {isCozy || !currentTrack ? "田园八音盒 · 休闲伴奏" : currentTrack.title}
             </div>
             <div className="music-sub" title={musicDir || ""}>
-              {currentTrack
-                ? `${currentTrack.folder} · ${currentTrack.ext}`
-                : musicDir || "自动读取系统音乐文件夹"}
+              {isCozy
+                ? tracks.length === 0
+                  ? "本地音乐库为空 · 点播放即可享受伴奏"
+                  : "内置零占用合成器 · 可随时切回本地歌单"
+                : `${currentTrack?.folder ?? "Music"} · ${currentTrack?.ext ?? ""}`}
             </div>
           </div>
         </div>
@@ -178,6 +236,7 @@ export const MusicDock: React.FC<MusicDockProps> = ({
             <button
               className={`ctrl-icon-btn ${shuffle ? "ctrl-active" : ""}`}
               onClick={() => setShuffle((s) => !s)}
+              disabled={isCozy}
               title="随机播放"
             >
               <ShuffleIcon size={14} />
@@ -185,14 +244,14 @@ export const MusicDock: React.FC<MusicDockProps> = ({
             <button
               className="ctrl-icon-btn"
               onClick={handlePrev}
-              disabled={tracks.length === 0}
+              disabled={isCozy || tracks.length === 0}
               title="上一首"
             >
               <PrevTrackIcon size={15} />
             </button>
             <button
               className="ctrl-play-btn"
-              onClick={tracks.length === 0 ? onPickMusicFolder : togglePlay}
+              onClick={togglePlay}
               title={isPlaying ? "暂停" : "播放"}
             >
               {isPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
@@ -200,7 +259,7 @@ export const MusicDock: React.FC<MusicDockProps> = ({
             <button
               className="ctrl-icon-btn"
               onClick={handleNext}
-              disabled={tracks.length === 0}
+              disabled={isCozy || tracks.length === 0}
               title="下一首"
             >
               <NextTrackIcon size={15} />
@@ -208,19 +267,20 @@ export const MusicDock: React.FC<MusicDockProps> = ({
             <button
               className={`ctrl-icon-btn ${showPlaylist ? "ctrl-active" : ""}`}
               onClick={() => setShowPlaylist((v) => !v)}
-              title="展开曲目列表"
+              title="展开播放列表与音源切换"
             >
               <PlaylistIcon size={15} />
             </button>
           </div>
           <div className="progress-row">
-            <span className="time-label">{fmtTime(currentTime)}</span>
+            <span className="time-label">{isCozy ? "LIVE" : fmtTime(currentTime)}</span>
             <input
               type="range"
               min={0}
-              max={duration || 1}
+              max={isCozy ? 100 : duration || 1}
               step={0.5}
-              value={currentTime}
+              disabled={isCozy}
+              value={isCozy ? (isPlaying ? 100 : 0) : currentTime}
               style={{ "--pct": `${progressPct}%` } as React.CSSProperties}
               onChange={(e) => {
                 const v = Number(e.target.value);
@@ -229,7 +289,7 @@ export const MusicDock: React.FC<MusicDockProps> = ({
               }}
               className="apple-slider"
             />
-            <span className="time-label">{fmtTime(duration)}</span>
+            <span className="time-label">{isCozy ? "∞" : fmtTime(duration)}</span>
           </div>
         </div>
 
@@ -254,7 +314,7 @@ export const MusicDock: React.FC<MusicDockProps> = ({
               title="音量"
             />
           </div>
-          <button className="btn-glass btn-sm" onClick={onPickMusicFolder} title="切换本地音乐目录">
+          <button className="btn-glass btn-sm" onClick={onPickMusicFolder} title="加载本地音乐文件夹">
             <FolderVectorIcon size={13} /> 音乐库
           </button>
         </div>

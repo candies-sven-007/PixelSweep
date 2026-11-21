@@ -95,3 +95,34 @@ export function formatBytes(bytes: number): string {
   const val = bytes / Math.pow(1024, idx);
   return `${val >= 100 ? val.toFixed(0) : val >= 10 ? val.toFixed(1) : val.toFixed(2)} ${units[idx]}`;
 }
+
+export function formatRelativeTime(unixSec: number): string {
+  if (!unixSec || unixSec <= 0) return "";
+  const diffSec = Math.max(0, Math.floor(Date.now() / 1000) - unixSec);
+  if (diffSec < 3600) return `${Math.max(1, Math.floor(diffSec / 60))}分钟前`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}小时前`;
+  const days = Math.floor(diffSec / 86400);
+  if (days < 30) return `${days}天前`;
+  if (days < 365) return `${Math.floor(days / 30)}个月前`;
+  return `${Math.floor(days / 365)}年前`;
+}
+
+export function getCategoryColor(catId: string, riskLevel: string): string {
+  const palette: Record<string, string> = {
+    win_user_temp: "#10b981",
+    mac_user_caches: "#10b981",
+    win_browser_cache: "#0ea5e9",
+    mac_user_logs: "#0ea5e9",
+    win_shader_dev_cache: "#6366f1",
+    mac_dev_caches: "#6366f1",
+    win_crash_dumps: "#8b5cf6",
+    win_system_temp: "#f59e0b",
+    mac_system_caches: "#f59e0b",
+    large_files: "#ec4899",
+    custom_scan: "#14b8a6",
+  };
+  if (palette[catId]) return palette[catId];
+  if (riskLevel === "elevated") return "#f59e0b";
+  if (riskLevel === "caution") return "#6366f1";
+  return "#10b981";
+}

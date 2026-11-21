@@ -1,5 +1,11 @@
 import React, { useMemo, useState } from "react";
-import { ScanCategoryResult, ScannedItem, formatBytes } from "../types";
+import {
+  ScanCategoryResult,
+  ScannedItem,
+  formatBytes,
+  formatRelativeTime,
+  getCategoryColor,
+} from "../types";
 import {
   CheckIcon,
   ChevronIcon,
@@ -11,6 +17,7 @@ import {
 
 interface CategoryAccordionProps {
   category: ScanCategoryResult;
+  grandTotalBytes: number;
   isExpanded: boolean;
   onToggleExpand: () => void;
   selectedPaths: Record<string, boolean>;
@@ -33,6 +40,7 @@ function getExtBadge(item: ScannedItem): string {
 
 export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
   category,
+  grandTotalBytes,
   isExpanded,
   onToggleExpand,
   selectedPaths,
@@ -78,12 +86,21 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
     [filteredItems]
   );
 
+  const accentColor = getCategoryColor(category.id, category.risk_level);
+  const sharePct =
+    grandTotalBytes > 0 ? Math.min(100, Math.round((category.total_bytes / grandTotalBytes) * 100)) : 0;
   const shownItems = filteredItems.slice(0, visibleLimit);
 
   return (
-    <div className={`acc-card ${isExpanded ? "acc-open" : ""} acc-risk-${category.risk_level}`}>
+    <div
+      id={`cat-card-${category.id}`}
+      className={`acc-card ${isExpanded ? "acc-open" : ""}`}
+      style={{ "--cat-accent": accentColor } as React.CSSProperties}
+    >
       {/* Header Row */}
       <div className="acc-header" onClick={onToggleExpand}>
+        <span className="acc-color-rail" style={{ background: accentColor }} />
+
         <button
           type="button"
           className={`apple-check ${allChecked ? "checked" : someChecked ? "indeterminate" : ""}`}
@@ -98,7 +115,7 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
           {someChecked && <MinusIcon size={11} />}
         </button>
 
-        <div className={`acc-icon-pill risk-bg-${category.risk_level}`}>
+        <div className="acc-icon-pill" style={{ background: `${accentColor}20`, color: accentColor }}>
           <FolderVectorIcon size={16} />
         </div>
 
@@ -122,36 +139,55 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
         <div className="acc-right">
           <div className="acc-size-group">
             <strong className="acc-total-size">{formatBytes(category.total_bytes)}</strong>
-            <span className="acc-selected-meta">
-              已选 {checkedItems.length}/{category.item_count}
-              {checkedBytes > 0 ? ` · ${formatBytes(checkedBytes)}` : ""}
-            </span>
+            <div className="acc-share-row">
+              <div className="acc-share-bar">
+                <div
+                  className="acc-share-fill"
+                  style={{ width: `${Math.max(4, sharePct)}%`, background: accentColor }}
+                />
+              </div>
+              <span className="acc-selected-meta">
+                {checkedItems.length}/{category.item_count}
+              </span>
+            </div>
           </div>
           <span className={`acc-chevron ${isExpanded ? "rotated" : ""}`}>
-            <ChevronIcon size={16} />
+            <ChevronIcon size={15} />
           </span>
         </div>
       </div>
 
-      {/* Smooth Animated Collapsible Body (CSS grid-template-rows) */}
+      {/* Smooth Animated Collapsible Body */}
       <div className="acc-collapse-outer">
         <div className="acc-collapse-inner">
           <div className="acc-body">
-            {category.root_paths.length > 0 && (
-              <div className="acc-roots-strip">
-                <span className="roots-label">扫描路径</span>
-                <div className="roots-chips">
-                  {category.root_paths.slice(0, 3).map((rp) => (
-                    <span key={rp} className="root-chip" title={rp}>
-                      {rp}
-                    </span>
-                  ))}
-                  {category.root_paths.length > 3 && (
-                    <span className="root-chip">+{category.root_paths.length - 3} 处</span>
-                  )}
-                </div>
+            <div className="acc-subbar">
+              <div className="roots-chips">
+                <span className="roots-label">来源目录</span>
+                {category.root_paths.slice(0, 2).map((rp) => (
+                  <span key={rp} className="root-chip" title={rp}>
+                    {rp}
+                  </span>
+                ))}
+                {category.root_paths.length > 2 && (
+                  <span className="root-chip">+{category.root_paths.length - 2} 处</span>
+                )}
               </div>
-            )}
+              <div className="subbar-right">
+                {checkedBytes > 0 && (
+                  <span className="subbar-selected">已选 {formatBytes(checkedBytes)}</span>
+                )}
+                {category.items.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn-inline-toggle"
+                    onClick={onToggleCategory}
+                  >
+                    {allChecked ? "取消全选" : "全选本类"}
+                  </button>
+                )}
+              </div>
+            </div>
 
             {filteredItems.length === 0 ? (
               <div className="acc-empty">
@@ -164,10 +200,11 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                 {shownItems.map((it) => {
                   const isChecked = !!selectedPaths[it.path];
                   const ratioPct = Math.max(
-                    3,
+                    4,
                     Math.min(100, Math.round((it.size_bytes / maxItemSize) * 100))
                   );
                   const badge = getExtBadge(it);
+                  const relTime = formatRelativeTime(it.modified_ts);
 
                   return (
                     <div
@@ -197,6 +234,7 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                             {it.name}
                           </span>
                           <span className="ext-badge">{badge}</span>
+                          {relTime && <span className="time-pill">{relTime}</span>}
                           {it.requires_privilege && (
                             <span className="priv-badge">需系统权限</span>
                           )}
@@ -209,7 +247,10 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                       <div className="item-size-col">
                         <span className="item-size-val">{formatBytes(it.size_bytes)}</span>
                         <div className="item-mini-bar">
-                          <div className="item-mini-fill" style={{ width: `${ratioPct}%` }} />
+                          <div
+                            className="item-mini-fill"
+                            style={{ width: `${ratioPct}%`, background: accentColor }}
+                          />
                         </div>
                       </div>
 

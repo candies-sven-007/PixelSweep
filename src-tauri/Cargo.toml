@@ -1,6 +1,6 @@
 [package]
 name = "pixelsweep"
-version = "1.1.0"
+version = "1.2.0"
 description = "Apple-style frosted glass disk cleaner with Stardew-inspired pixel animations and local music player"
 authors = ["Candies"]
 edition = "2021"

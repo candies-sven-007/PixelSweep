@@ -16,6 +16,7 @@ import {
   formatBytes,
 } from "./types";
 import { PixelFarmerStage } from "./components/PixelFarmerStage";
+import { StorageBreakdownBar } from "./components/StorageBreakdownBar";
 import { CategoryAccordion } from "./components/CategoryAccordion";
 import { AuditModal } from "./components/AuditModal";
 import { MusicDock } from "./components/MusicDock";
@@ -42,39 +43,47 @@ const PREVIEW_MODULES = [
     title: "用户临时与安装包残留",
     tag: "安全缓存",
     risk: "safe",
+    color: "#10b981",
     desc: "深度排查系统 Temp 与应用临时解压目录，不影响个人文档。",
   },
   {
     title: "主流浏览器网页缓存",
     tag: "安全缓存",
     risk: "safe",
+    color: "#0ea5e9",
     desc: "清理 Chrome / Edge / Brave / Firefox 静态缓存，保留书签与密码。",
   },
   {
     title: "显卡着色器与开发缓存",
     tag: "需人工审核",
     risk: "caution",
-    desc: "定位 DirectX / NVIDIA / Xcode / npm / pip / Cargo 冗余构建缓存。",
+    color: "#6366f1",
+    desc: "定位 DirectX / NVIDIA / Xcode / npm / pnpm / pip / uv / Cargo 冗余缓存。",
   },
   {
     title: "崩溃转储与诊断日志",
     tag: "安全缓存",
     risk: "safe",
+    color: "#8b5cf6",
     desc: "回收程序异常闪退生成的 .dmp 转储文件与陈旧诊断报告。",
   },
   {
     title: "系统根目录与更新缓存",
     tag: "系统权限项",
     risk: "elevated",
+    color: "#f59e0b",
     desc: "涉及 C:\\Windows\\Temp 或 /Library 系统区，清理前强制报警审核。",
   },
   {
     title: "大文件深度雷达 (>100MB)",
     tag: "需人工审核",
     risk: "caution",
+    color: "#ec4899",
     desc: "揪出下载目录与桌面沉睡的大型安装包、镜像与压缩包，默认不勾选。",
   },
 ];
+
+const LIFETIME_KEY = "pixelsweep_lifetime_freed_bytes";
 
 export const App: React.FC = () => {
   const [sysStatus, setSysStatus] = useState<SystemStatus | null>(null);
@@ -93,11 +102,16 @@ export const App: React.FC = () => {
   const [cleanMode, setCleanMode] = useState<"recycle" | "permanent">("recycle");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"size" | "name">("size");
+  const [riskFilter, setRiskFilter] = useState<"all" | "safe" | "elevated" | "caution">("all");
 
   // Modal & Reports
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [lastReport, setLastReport] = useState<CleanReport | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [lifetimeFreed, setLifetimeFreed] = useState<number>(() => {
+    const raw = window.localStorage.getItem(LIFETIME_KEY);
+    return raw ? Number(raw) || 0 : 0;
+  });
 
   // Music state
   const [musicDir, setMusicDir] = useState<string | null>(null);
@@ -158,6 +172,7 @@ export const App: React.FC = () => {
     if (isScanning || isCleaning) return;
     setIsScanning(true);
     setLastReport(null);
+    setRiskFilter("all");
     setMood("scanning");
     try {
       const res = await invoke<FullScanResult>("start_full_scan");
@@ -171,7 +186,6 @@ export const App: React.FC = () => {
         }
       }
       setSelectedPaths(nextSelected);
-      // Auto-expand the first non-empty category
       const firstNonEmpty = res.categories.find((c) => c.items.length > 0) ?? res.categories[0];
       if (firstNonEmpty) {
         setExpandedMap({ [firstNonEmpty.id]: true });
@@ -190,6 +204,32 @@ export const App: React.FC = () => {
     }
   };
 
+  const scanSpecificPath = async (targetPath: string, minMb = 50) => {
+    if (isScanning || isCleaning) return;
+    setIsScanning(true);
+    setMood("scanning");
+    try {
+      const customCat = await invoke<ScanCategoryResult>("scan_custom_folder", {
+        targetDir: targetPath,
+        minSizeMb: minMb,
+      });
+      setCategories((prev) => [customCat, ...prev.filter((c) => c.id !== "custom_scan")]);
+      setRiskFilter("all");
+      setExpandedMap((prev) => ({ ...prev, [customCat.id]: true }));
+      setMood("idle");
+      showToast(
+        `目录扫描完成：发现 ${customCat.item_count} 个大文件（共 ${formatBytes(
+          customCat.total_bytes
+        )}）`
+      );
+    } catch (e) {
+      setMood("idle");
+      showToast(`扫描失败: ${String(e)}`);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
   const handleCustomFolderScan = async () => {
     if (isScanning || isCleaning) return;
     const picked = await open({
@@ -198,28 +238,7 @@ export const App: React.FC = () => {
       title: "选择要深度排查的磁盘或文件夹",
     });
     if (!picked || typeof picked !== "string") return;
-
-    setIsScanning(true);
-    setMood("scanning");
-    try {
-      const customCat = await invoke<ScanCategoryResult>("scan_custom_folder", {
-        targetDir: picked,
-        minSizeMb: 50,
-      });
-      setCategories((prev) => [customCat, ...prev.filter((c) => c.id !== "custom_scan")]);
-      setExpandedMap((prev) => ({ ...prev, [customCat.id]: true }));
-      setMood("idle");
-      showToast(
-        `自定义目录扫描完成：发现 ${customCat.item_count} 个大文件（共 ${formatBytes(
-          customCat.total_bytes
-        )}）`
-      );
-    } catch (e) {
-      setMood("idle");
-      showToast(`自定义扫描失败: ${String(e)}`);
-    } finally {
-      setIsScanning(false);
-    }
+    await scanSpecificPath(picked, 50);
   };
 
   const handlePickMusicFolder = async () => {
@@ -232,6 +251,16 @@ export const App: React.FC = () => {
     await loadMusic(picked);
     showToast("已切换本地音乐库");
   };
+
+  const grandTotalBytes = useMemo(
+    () => categories.reduce((acc, c) => acc + c.total_bytes, 0),
+    [categories]
+  );
+
+  const visibleCategories = useMemo(() => {
+    if (riskFilter === "all") return categories;
+    return categories.filter((c) => c.risk_level === riskFilter);
+  }, [categories, riskFilter]);
 
   const selectedItems: ScannedItem[] = useMemo(() => {
     const out: ScannedItem[] = [];
@@ -271,13 +300,27 @@ export const App: React.FC = () => {
       }
     }
     setSelectedPaths(next);
-    showToast("已一键勾选所有安全缓存项");
+    showToast("已应用「安全轻扫」方案");
+  };
+
+  const clearSelection = () => {
+    setSelectedPaths({});
+    showToast("已清空全部勾选");
   };
 
   const setAllExpanded = (openAll: boolean) => {
     const next: Record<string, boolean> = {};
     for (const cat of categories) next[cat.id] = openAll;
     setExpandedMap(next);
+  };
+
+  const focusCategory = (catId: string) => {
+    setRiskFilter("all");
+    setExpandedMap((prev) => ({ ...prev, [catId]: true }));
+    window.setTimeout(() => {
+      const el = document.getElementById(`cat-card-${catId}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, 60);
   };
 
   const openAuditFlow = () => {
@@ -299,6 +342,14 @@ export const App: React.FC = () => {
         mode,
       });
       setLastReport(report);
+      if (report.freed_bytes > 0) {
+        setLifetimeFreed((prev) => {
+          const updated = prev + report.freed_bytes;
+          window.localStorage.setItem(LIFETIME_KEY, String(updated));
+          return updated;
+        });
+      }
+
       const skippedSet = new Set(report.skipped_items.map((s) => s.path));
       const deletedSet = new Set(approvedPaths.filter((p) => !skippedSet.has(p)));
 
@@ -374,12 +425,13 @@ export const App: React.FC = () => {
 
   return (
     <div className={`app-shell theme-${theme}`}>
-      {/* Ambient Apple Liquid Glass Mesh Orbs */}
+      {/* Frosted Glass Micro-Grain + Ambient Liquid Orbs */}
       <div className="ambient-mesh" aria-hidden>
         <span className="orb orb-1" />
         <span className="orb orb-2" />
         <span className="orb orb-3" />
       </div>
+      <div className="glass-noise-overlay" aria-hidden />
 
       {/* Unified Translucent Titlebar */}
       <header className="titlebar" data-tauri-drag-region>
@@ -388,7 +440,7 @@ export const App: React.FC = () => {
             <PixelBroomIcon size={18} />
           </div>
           <span className="brand-name">PixelSweep</span>
-          <span className="brand-badge">v1.1</span>
+          <span className="brand-badge">v1.2</span>
           {sysStatus && (
             <span className="brand-env">
               {sysStatus.os === "windows" ? "Windows" : "macOS"} · {sysStatus.arch}
@@ -397,6 +449,12 @@ export const App: React.FC = () => {
         </div>
 
         <div className="titlebar-right">
+          {lifetimeFreed > 0 && (
+            <span className="lifetime-pill" title="累计已清理释放的磁盘空间">
+              累计已释放 <strong>{formatBytes(lifetimeFreed)}</strong>
+            </span>
+          )}
+
           <button
             className="glass-chip"
             onClick={toggleTheme}
@@ -426,16 +484,12 @@ export const App: React.FC = () => {
 
       {/* Main Split Workspace */}
       <div className="workspace">
-        {/* Left Apple-Style Translucent Vibrancy Sidebar */}
+        {/* Left Apple-Style Translucent Sidebar */}
         <aside className="sidebar">
           <div className="sidebar-section">
             <div className="section-head">
-              <span className="section-label">磁盘空间概览</span>
-              <button
-                className="tiny-icon-btn"
-                onClick={refreshSystem}
-                title="刷新磁盘容量"
-              >
+              <span className="section-label">磁盘空间概览（点击直扫大文件）</span>
+              <button className="tiny-icon-btn" onClick={refreshSystem} title="刷新磁盘容量">
                 <RefreshIcon size={12} />
               </button>
             </div>
@@ -446,7 +500,14 @@ export const App: React.FC = () => {
                   Math.round((d.used_bytes / Math.max(1, d.total_bytes)) * 100)
                 );
                 return (
-                  <div key={d.mount_point} className="disk-card">
+                  <button
+                    key={d.mount_point}
+                    type="button"
+                    className="disk-card clickable-disk"
+                    disabled={isScanning || isCleaning}
+                    onClick={() => scanSpecificPath(d.mount_point, 100)}
+                    title={`点击排查 ${d.mount_point} 中大于 100MB 的大文件`}
+                  >
                     <div className="disk-top">
                       <span className="disk-mount">
                         <HardDriveIcon size={13} />
@@ -463,7 +524,7 @@ export const App: React.FC = () => {
                     <div className="disk-meta">
                       可用 {formatBytes(d.available_bytes)} / 共 {formatBytes(d.total_bytes)}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -502,7 +563,7 @@ export const App: React.FC = () => {
               onClick={handleCustomFolderScan}
               disabled={isScanning || isCleaning}
             >
-              <FolderVectorIcon size={14} /> 自定义扫盘 / 选定目录
+              <FolderVectorIcon size={14} /> 自定义目录深度扫盘
             </button>
             <button
               className="btn-glass btn-full"
@@ -514,7 +575,7 @@ export const App: React.FC = () => {
           </div>
         </aside>
 
-        {/* Right Primary Luminous Frosted Canvas */}
+        {/* Right Primary Luminous Frosted Stage */}
         <main className="main-pane">
           {sysStatus && sysStatus.permission_warnings.length > 0 && (
             <div className="sys-warning-strip">
@@ -523,7 +584,7 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {/* Hero Diorama Panel */}
+          {/* Hero Pixel Diorama Panel */}
           <div className="hero-panel">
             <PixelFarmerStage
               mood={mood}
@@ -571,7 +632,16 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {/* Filter & Accordion Toolbar when scan results exist */}
+          {/* Apple macOS Storage-Style Colored Breakdown Bar */}
+          {categories.length > 0 && (
+            <StorageBreakdownBar
+              categories={categories}
+              selectedPaths={selectedPaths}
+              onFocusCategory={focusCategory}
+            />
+          )}
+
+          {/* Filter, Risk Tabs & Accordion Controls */}
           {categories.length > 0 && (
             <div className="results-toolbar">
               <div className="search-input-wrap">
@@ -580,7 +650,7 @@ export const App: React.FC = () => {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="按文件名或路径快速筛选..."
+                  placeholder="搜索文件名或路径..."
                   className="glass-search-input"
                 />
                 {searchQuery && (
@@ -596,6 +666,25 @@ export const App: React.FC = () => {
 
               <div className="toolbar-actions">
                 <div className="segmented-control">
+                  {(
+                    [
+                      ["all", "全部"],
+                      ["safe", "安全"],
+                      ["caution", "审核"],
+                      ["elevated", "系统"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      className={riskFilter === key ? "seg-active" : ""}
+                      onClick={() => setRiskFilter(key)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="segmented-control">
                   <button
                     className={sortBy === "size" ? "seg-active" : ""}
                     onClick={() => setSortBy("size")}
@@ -609,36 +698,41 @@ export const App: React.FC = () => {
                     按名称
                   </button>
                 </div>
+
                 <button className="btn-glass btn-xs" onClick={selectSafeOnly}>
-                  仅选安全项
+                  安全轻扫
+                </button>
+                <button className="btn-glass btn-xs" onClick={clearSelection}>
+                  清空
                 </button>
                 <button className="btn-glass btn-xs" onClick={() => setAllExpanded(true)}>
-                  全部展开
+                  全展
                 </button>
                 <button className="btn-glass btn-xs" onClick={() => setAllExpanded(false)}>
-                  全部折叠
+                  全收
                 </button>
               </div>
             </div>
           )}
 
-          {/* Categories Accordion List OR Tactile Pre-Scan Blueprint Grid */}
+          {/* Categories Accordion List OR Pre-Scan Blueprint */}
           <div className="categories-wrap">
             {categories.length === 0 ? (
               <div className="blueprint-stage">
                 <div className="blueprint-header">
-                  <div>
-                    <h3>全盘智能巡检引擎 · 6 大靶向模块</h3>
-                    <p>
-                      点击右上角「一键深度扫盘」即可按以下模块安全扫描，高危目录与大文件默认不勾选，清理前均支持逐项审视。
-                    </p>
-                  </div>
+                  <h3>全盘智能巡检引擎 · 6 大靶向模块</h3>
+                  <p>
+                    点击右上角「一键深度扫盘」全面体检，或直接点击左侧任一磁盘快速揪出大文件；涉及系统级目录均会在清理前触发权限警报与清单审视。
+                  </p>
                 </div>
                 <div className="blueprint-grid">
                   {PREVIEW_MODULES.map((m) => (
                     <div key={m.title} className="blueprint-card">
                       <div className="bp-top">
-                        <strong>{m.title}</strong>
+                        <span className="bp-title-wrap">
+                          <span className="bp-dot" style={{ background: m.color }} />
+                          <strong>{m.title}</strong>
+                        </span>
                         <span className={`risk-pill risk-${m.risk}`}>{m.tag}</span>
                       </div>
                       <p>{m.desc}</p>
@@ -647,10 +741,11 @@ export const App: React.FC = () => {
                 </div>
               </div>
             ) : (
-              categories.map((cat) => (
+              visibleCategories.map((cat) => (
                 <CategoryAccordion
                   key={cat.id}
                   category={cat}
+                  grandTotalBytes={grandTotalBytes}
                   isExpanded={!!expandedMap[cat.id]}
                   onToggleExpand={() =>
                     setExpandedMap((prev) => ({ ...prev, [cat.id]: !prev[cat.id] }))
