@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { ScannedItem, formatBytes } from "../types";
 import { PixelShieldAlertIcon } from "./PixelIcons";
+import { CheckIcon, WinCloseIcon } from "./UiIcons";
 
 interface AuditModalProps {
   items: ScannedItem[];
@@ -50,11 +51,13 @@ export const AuditModal: React.FC<AuditModalProps> = ({
     (mode === "recycle" || confirmPermanent);
 
   return (
-    <div className="modal-backdrop">
-      <div className="glass-modal">
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="glass-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-row">
-            <PixelShieldAlertIcon size={24} />
+            <div className="modal-shield-badge">
+              <PixelShieldAlertIcon size={22} />
+            </div>
             <div>
               <h3>清理前安全审视与权限确认</h3>
               <p className="muted-text">
@@ -62,8 +65,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({
               </p>
             </div>
           </div>
-          <button className="icon-btn" onClick={onCancel} aria-label="关闭">
-            ✕
+          <button className="icon-close-btn" onClick={onCancel} aria-label="关闭">
+            <WinCloseIcon size={12} />
           </button>
         </div>
 
@@ -71,12 +74,12 @@ export const AuditModal: React.FC<AuditModalProps> = ({
           <div className={`alarm-banner ${mode === "permanent" ? "alarm-danger" : "alarm-warn"}`}>
             <strong>
               {elevatedItems.length > 0
-                ? `⚠ 系统权限警报：清单包含 ${elevatedItems.length} 项系统级路径`
-                : "⚠ 不可逆操作警报：当前已选择【直接彻底删除】"}
+                ? `系统权限警报：清单包含 ${elevatedItems.length} 项系统级路径`
+                : "不可逆操作警报：当前已选择【直接彻底删除】"}
             </strong>
             <p>
               {elevatedItems.length > 0
-                ? "部分目标位于系统目录（如 Windows\Temp、更新缓存或 /Library 系统区），清理需要管理员或完全磁盘访问权限。请务必审视下方清单后再放行。"
+                ? "部分目标位于系统目录（如 Windows\\Temp、更新缓存或 /Library 系统区），清理需要管理员或完全磁盘访问权限。请务必审视下方清单后再放行。"
                 : "直接彻底删除将绕过系统回收站/废纸篓，文件删除后无法恢复。若不确定，建议切换回「移入回收站」。"}
             </p>
           </div>
@@ -84,6 +87,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
         <div className="mode-selector">
           <button
+            type="button"
             className={`mode-pill ${mode === "recycle" ? "active-safe" : ""}`}
             onClick={() => onModeChange("recycle")}
           >
@@ -91,6 +95,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
             <span>安全可恢复，确认无异常后再一键清空回收站</span>
           </button>
           <button
+            type="button"
             className={`mode-pill ${mode === "permanent" ? "active-danger" : ""}`}
             onClick={() => onModeChange("permanent")}
           >
@@ -104,60 +109,68 @@ export const AuditModal: React.FC<AuditModalProps> = ({
             待清理清单：<strong>{approvedItems.length}</strong> 项，预计释放{" "}
             <strong>{formatBytes(totalBytes)}</strong>
           </span>
-          <span className="muted-text">可随时取消勾选不需要删除的项目</span>
+          <span className="muted-text">可随时点击取消勾选不需要删除的项目</span>
         </div>
 
         <div className="audit-list">
-          {items.map((it) => (
-            <label key={it.path} className="audit-row">
-              <input
-                type="checkbox"
-                checked={!!checkedMap[it.path]}
-                onChange={() => toggleItem(it.path)}
-              />
-              <div className="audit-row-main">
-                <div className="audit-row-top">
-                  <span className="audit-name">{it.name}</span>
-                  {(it.requires_privilege || it.risk_level === "elevated") && (
-                    <span className="tag-elevated">需系统权限</span>
-                  )}
-                </div>
-                <span className="audit-path" title={it.path}>
-                  {it.path}
+          {items.map((it) => {
+            const isChecked = !!checkedMap[it.path];
+            return (
+              <div
+                key={it.path}
+                className={`audit-row ${isChecked ? "audit-checked" : ""}`}
+                onClick={() => toggleItem(it.path)}
+              >
+                <span className={`apple-check sm ${isChecked ? "checked" : ""}`}>
+                  {isChecked && <CheckIcon size={10} />}
                 </span>
+                <div className="audit-row-main">
+                  <div className="audit-row-top">
+                    <span className="audit-name">{it.name}</span>
+                    {(it.requires_privilege || it.risk_level === "elevated") && (
+                      <span className="priv-badge">需系统权限</span>
+                    )}
+                  </div>
+                  <span className="audit-path" title={it.path}>
+                    {it.path}
+                  </span>
+                </div>
+                <span className="audit-size">{formatBytes(it.size_bytes)}</span>
               </div>
-              <span className="audit-size">{formatBytes(it.size_bytes)}</span>
-            </label>
-          ))}
+            );
+          })}
         </div>
 
         <div className="audit-confirm-checks">
-          <label className="confirm-check">
-            <input
-              type="checkbox"
-              checked={hasReviewed}
-              onChange={(e) => setHasReviewed(e.target.checked)}
-            />
+          <div
+            className="confirm-check"
+            onClick={() => setHasReviewed((v) => !v)}
+          >
+            <span className={`apple-check sm ${hasReviewed ? "checked" : ""}`}>
+              {hasReviewed && <CheckIcon size={10} />}
+            </span>
             <span>我已审视以上文件清单与权限报警，同意对已勾选项目执行清理操作。</span>
-          </label>
+          </div>
 
           {mode === "permanent" && (
-            <label className="confirm-check danger-check">
-              <input
-                type="checkbox"
-                checked={confirmPermanent}
-                onChange={(e) => setConfirmPermanent(e.target.checked)}
-              />
+            <div
+              className="confirm-check danger-check"
+              onClick={() => setConfirmPermanent((v) => !v)}
+            >
+              <span className={`apple-check sm danger-box ${confirmPermanent ? "checked" : ""}`}>
+                {confirmPermanent && <CheckIcon size={10} />}
+              </span>
               <span>我明确知晓【直接彻底删除】无法从回收站恢复，确认永久销毁所选文件。</span>
-            </label>
+            </div>
           )}
         </div>
 
         <div className="modal-footer">
-          <button className="btn-glass" onClick={onCancel}>
+          <button type="button" className="btn-glass" onClick={onCancel}>
             取消返回
           </button>
           <button
+            type="button"
             className={mode === "permanent" ? "btn-danger" : "btn-primary"}
             disabled={!canProceed}
             onClick={() =>

@@ -5,7 +5,41 @@ mod safety;
 mod scanner;
 
 use models::{CleanReport, FullScanResult, MusicTrack, ScanCategoryResult, SystemStatus};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
+
+fn apply_native_glass(window: &WebviewWindow, dark: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = dark;
+        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+        let _ = apply_vibrancy(window, NSVisualEffectMaterial::HudWindow, None, None);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::{apply_acrylic, apply_mica};
+        if apply_mica(window, Some(dark)).is_err() {
+            let tint = if dark {
+                Some((18, 22, 34, 200))
+            } else {
+                Some((246, 249, 255, 195))
+            };
+            let _ = apply_acrylic(window, tint);
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (window, dark);
+    }
+}
+
+#[tauri::command]
+fn set_window_theme(app: AppHandle, dark: bool) {
+    if let Some(window) = app.get_webview_window("main") {
+        apply_native_glass(&window, dark);
+    }
+}
 
 #[tauri::command]
 fn get_system_status() -> SystemStatus {
@@ -115,24 +149,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
-                #[cfg(target_os = "macos")]
-                {
-                    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-                    let _ = apply_vibrancy(&window, NSVisualEffectMaterial::HudWindow, None, None);
-                }
-
                 #[cfg(target_os = "windows")]
                 {
-                    use window_vibrancy::{apply_acrylic, apply_mica};
                     let _ = window.set_decorations(false);
-                    if apply_mica(&window, None).is_err() {
-                        let _ = apply_acrylic(&window, Some((28, 32, 42, 165)));
-                    }
                 }
+                apply_native_glass(&window, false);
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_window_theme,
             get_system_status,
             start_full_scan,
             scan_custom_folder,
