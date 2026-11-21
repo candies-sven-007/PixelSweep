@@ -123,12 +123,15 @@ pub fn is_elevated_path(path: &Path) -> bool {
     #[cfg(target_os = "windows")]
     {
         return normalized.starts_with("c:\\windows\\")
-            || normalized.starts_with("c:\\programdata\\");
+            || normalized.starts_with("c:\\programdata\\")
+            || normalized.starts_with("c:\\program files\\")
+            || normalized.starts_with("c:\\program files (x86)\\");
     }
     #[cfg(target_os = "macos")]
     {
         return normalized.starts_with("/Library/")
-            || normalized.starts_with("/private/var/");
+            || normalized.starts_with("/private/var/")
+            || normalized.starts_with("/Applications/");
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {

@@ -1,4 +1,5 @@
-use crate::analyzer::{classify_entry, is_collapsible_dir_name, should_skip_during_broad_scan};
+use crate::analyzer::{classify_entry, is_collapsible_dir_name, should_skip_during_broad_scan, should_skip_during_search};
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::models::{
     DiskSummary, FullScanResult, ScanCategoryResult, ScanProgressPayload, ScannedItem,
     SmartSummary, SystemStatus,
@@ -492,6 +493,9 @@ fn scan_semantic_tree(
 
         while let Some(entry_res) = iter.next() {
             visited += 1;
+            if visited % 200 == 0 && CANCEL_FLAG.load(Ordering::Relaxed) {
+                return;
+            }
             if visited > 60_000 {
                 break;
             }
@@ -611,6 +615,7 @@ fn scan_semantic_tree(
 
 /// Full intelligent audit: combines OS/App caches + semantic classification of user spaces (Life/Entertainment/Work/Junk)
 pub fn run_full_scan(app: &AppHandle) -> FullScanResult {
+    reset_cancel_flag();
     let started = Instant::now();
     let mut buckets = init_domain_buckets();
     let mut seen = HashSet::new();
@@ -784,6 +789,7 @@ pub fn scan_custom_directory(
         return Err("所选路径不存在或不是文件夹".to_string());
     }
 
+    reset_cancel_flag();
     let started = Instant::now();
     let mut buckets = init_domain_buckets();
     let mut seen = HashSet::new();
@@ -810,4 +816,260 @@ pub fn scan_custom_directory(
         started,
         app,
     ))
+}
+
+
+static CANCEL_FLAG: AtomicBool = AtomicBool::new(false);
+
+pub fn request_cancel_scan() {
+    CANCEL_FLAG.store(true, Ordering::Relaxed);
+}
+
+pub fn reset_cancel_flag() {
+    CANCEL_FLAG.store(false, Ordering::Relaxed);
+}
+
+fn parse_search_terms(raw: &str) -> Vec<String> {
+    raw.split(|c: char| matches!(c, ',' | '，' | ';' | '；' | '|' | '\n' | '\t' | ' '))
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| s.len() >= 2 || s.starts_with('.'))
+        .collect()
+}
+
+fn matches_terms(name_lower: &str, terms: &[String]) -> Option<String> {
+    for t in terms {
+        if name_lower.contains(t.as_str()) {
+            return Some(t.clone());
+        }
+    }
+    None
+}
+
+fn collect_priority_app_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let home = dirs::home_dir().unwrap_or_default();
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(d) = dirs::data_dir() { roots.push(d); }
+        if let Some(d) = dirs::data_local_dir() { roots.push(d); }
+        if let Some(d) = dirs::download_dir() { roots.push(d); }
+        if let Some(d) = dirs::desktop_dir() { roots.push(d); }
+        if let Some(d) = dirs::document_dir() { roots.push(d); }
+        roots.push(home.clone());
+        roots.push(PathBuf::from("C:\\ProgramData"));
+        roots.push(PathBuf::from("C:\\Program Files"));
+        roots.push(PathBuf::from("C:\\Program Files (x86)"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let lib = home.join("Library");
+        roots.push(lib.join("Application Support"));
+        roots.push(lib.join("Caches"));
+        roots.push(lib.join("Preferences"));
+        roots.push(lib.join("Logs"));
+        roots.push(lib.join("Containers"));
+        roots.push(PathBuf::from("/Applications"));
+        roots.push(PathBuf::from("/Library/Application Support"));
+        roots.push(PathBuf::from("/Library/Caches"));
+        if let Some(d) = dirs::download_dir() { roots.push(d); }
+        if let Some(d) = dirs::desktop_dir() { roots.push(d); }
+        if let Some(d) = dirs::document_dir() { roots.push(d); }
+        roots.push(home.clone());
+    }
+
+    existing_paths(roots)
+}
+
+fn collect_all_drive_roots() -> Vec<PathBuf> {
+    let disks = Disks::new_with_refreshed_list();
+    let mut roots = Vec::new();
+    for d in disks.list() {
+        if d.total_space() == 0 {
+            continue;
+        }
+        let mp = d.mount_point().to_path_buf();
+        #[cfg(target_os = "macos")]
+        {
+            let s = mp.to_string_lossy();
+            if s.starts_with("/System/Volumes/") && s != "/System/Volumes/Data" {
+                continue;
+            }
+        }
+        if mp.exists() {
+            roots.push(mp);
+        }
+    }
+    roots
+}
+
+pub fn search_whole_computer(
+    app: &AppHandle,
+    query: &str,
+    scope: &str,
+) -> Result<FullScanResult, String> {
+    let terms = parse_search_terms(query);
+    if terms.is_empty() {
+        return Err("请输入至少 2 个字符的搜索关键词（多个关键词可用空格或逗号隔开）".to_string());
+    }
+
+    reset_cancel_flag();
+    let started = Instant::now();
+    let mut buckets = init_domain_buckets();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut running_bytes = 0u64;
+    let mut running_items = 0usize;
+    let mut total_visited = 0usize;
+
+    let mut search_roots: Vec<(PathBuf, usize, &'static str)> = Vec::new();
+
+    if scope == "apps" {
+        for r in collect_priority_app_roots() {
+            search_roots.push((r, 4, "极速搜刮应用数据与用户目录"));
+        }
+    } else if scope == "all" || scope.trim().is_empty() {
+        for r in collect_priority_app_roots() {
+            search_roots.push((r, 4, "第一阶段：搜刮应用残留、配置与用户目录"));
+        }
+        for r in collect_all_drive_roots() {
+            search_roots.push((r, 6, "第二阶段：全电脑各磁盘深度巡检"));
+        }
+    } else {
+        let p = PathBuf::from(scope);
+        if !p.exists() || !p.is_dir() {
+            return Err(format!("指定搜索范围不存在: {}", scope));
+        }
+        search_roots.push((p, 7, "正在深度搜索指定磁盘/目录"));
+    }
+
+    let total_roots = search_roots.len().max(1);
+    let mut cancelled = false;
+
+    for (r_idx, (root, max_depth, phase_label)) in search_roots.into_iter().enumerate() {
+        if CANCEL_FLAG.load(Ordering::Relaxed) {
+            cancelled = true;
+            break;
+        }
+
+        let base_pct = ((r_idx * 95) / total_roots).min(95) as u8;
+        let _ = app.emit(
+            "scan-progress",
+            ScanProgressPayload {
+                stage: format!("{} · 关键词「{}」", phase_label, query.trim()),
+                current_path: root.to_string_lossy().to_string(),
+                found_bytes: running_bytes,
+                found_items: running_items,
+                progress_pct: base_pct,
+            },
+        );
+
+        let mut iter = WalkDir::new(&root).max_depth(max_depth).follow_links(false).into_iter();
+        let mut root_visited = 0usize;
+
+        while let Some(entry_res) = iter.next() {
+            root_visited += 1;
+            total_visited += 1;
+
+            if total_visited % 250 == 0 {
+                if CANCEL_FLAG.load(Ordering::Relaxed) {
+                    cancelled = true;
+                    break;
+                }
+                if let Ok(ref e) = entry_res {
+                    let _ = app.emit(
+                        "scan-progress",
+                        ScanProgressPayload {
+                            stage: format!("{} · 已扫描 {} 项", phase_label, total_visited),
+                            current_path: e.path().to_string_lossy().to_string(),
+                            found_bytes: running_bytes,
+                            found_items: running_items,
+                            progress_pct: base_pct,
+                        },
+                    );
+                }
+            }
+
+            if root_visited > 160_000 || running_items >= 1_200 {
+                break;
+            }
+
+            match entry_res {
+                Ok(e) => {
+                    let p = e.path();
+                    if e.depth() == 0 || e.file_type().is_symlink() {
+                        continue;
+                    }
+                    if e.file_type().is_dir() && should_skip_during_search(p) {
+                        iter.skip_current_dir();
+                        continue;
+                    }
+
+                    let name_str = e.file_name().to_string_lossy().to_string();
+                    let name_lower = name_str.to_lowercase();
+
+                    if let Some(hit_term) = matches_terms(&name_lower, &terms) {
+                        let p_str = p.to_string_lossy().to_string();
+                        if !seen.insert(p_str.clone()) {
+                            if e.file_type().is_dir() {
+                                iter.skip_current_dir();
+                            }
+                            continue;
+                        }
+
+                        let is_dir = e.file_type().is_dir();
+                        let (sz, sub_denied) = if is_dir {
+                            dir_size_safe(p)
+                        } else {
+                            (e.metadata().map(|m| m.len()).unwrap_or(0), 0)
+                        };
+
+                        let m_ts = modified_unix(p);
+                        let mut cls = classify_entry(p, is_dir, sz, m_ts, None);
+                        cls.ai_reason = format!("命中「{}」· {}", hit_term, cls.ai_reason);
+
+                        if let Some(b) = buckets.get_mut(cls.domain) {
+                            b.denied_count += sub_denied;
+                            b.push_item(
+                                ScannedItem {
+                                    path: p_str.clone(),
+                                    name: name_str,
+                                    size_bytes: sz,
+                                    is_dir,
+                                    modified_ts: m_ts,
+                                    category_id: cls.domain.to_string(),
+                                    domain: cls.domain.to_string(),
+                                    recommendation: cls.recommendation.to_string(),
+                                    ai_reason: cls.ai_reason,
+                                    risk_level: cls.risk_level.to_string(),
+                                    requires_privilege: cls.requires_privilege,
+                                },
+                                Some(&root),
+                            );
+                        }
+
+                        running_bytes = running_bytes.saturating_add(sz);
+                        running_items += 1;
+
+                        if is_dir {
+                            iter.skip_current_dir();
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    let scope_desc = if cancelled {
+        format!("全电脑搜刮「{}」(已手动停止)", query.trim())
+    } else if scope == "apps" {
+        format!("应用与用户目录搜刮「{}」", query.trim())
+    } else if scope == "all" {
+        format!("全电脑深度搜刮「{}」", query.trim())
+    } else {
+        format!("{} 搜刮「{}」", scope, query.trim())
+    };
+
+    Ok(finalize_result(buckets, scope_desc, started, app))
 }

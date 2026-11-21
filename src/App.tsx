@@ -48,11 +48,11 @@ const SMART_BLUEPRINT = [
     desc: "自动侦测系统临时碎片、残留安装包、未完成下载、重复副本与浏览器网页缓存。",
   },
   {
-    title: "软件与开发构建缓存",
+    title: "软件、AI 模型与构建缓存",
     tag: "按需审视",
     risk: "caution",
     color: "#6366f1",
-    desc: "识别显卡着色器、过期 node_modules/target 依赖及 npm/pip/Cargo/Xcode 缓存。",
+    desc: "识别本地大模型权重（.gguf/.safetensors）、显卡着色器、过期依赖及开发缓存。",
   },
   {
     title: "娱乐、影音与游戏区",
@@ -80,8 +80,16 @@ const SMART_BLUEPRINT = [
     tag: "系统权限项",
     risk: "elevated",
     color: "#f59e0b",
-    desc: "覆盖 Windows\\Temp、更新缓存与 macOS /Library 系统区，清理前强制报警审核。",
+    desc: "覆盖 Windows\\Temp、更新缓存、安装目录与 macOS /Library，清理前强制报警审核。",
   },
+];
+
+const QUICK_SEARCH_PRESETS = [
+  { label: "Claude / Anthropic", query: "anthropic, claude" },
+  { label: "AI 模型 (.gguf / .safetensors)", query: ".gguf, .safetensors, .onnx" },
+  { label: "Ollama / HuggingFace", query: "ollama, huggingface, lmstudio" },
+  { label: "微信 / QQ", query: "wechat, tencent" },
+  { label: "Steam / 原神", query: "steam, genshin, mihoyo" },
 ];
 
 const LIFETIME_KEY = "pixelsweep_lifetime_freed_bytes";
@@ -93,7 +101,9 @@ export const App: React.FC = () => {
   const [mood, setMood] = useState<CharacterMood>("idle");
   const [isPlayingMusic, setIsPlayingMusic] = useState(false);
 
-  // Scan & smart filter state
+  const [globalQuery, setGlobalQuery] = useState("");
+  const [searchScope, setSearchScope] = useState<string>("all");
+
   const [isScanning, setIsScanning] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgressPayload | null>(null);
@@ -103,11 +113,10 @@ export const App: React.FC = () => {
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({});
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>({});
   const [cleanMode, setCleanMode] = useState<"recycle" | "permanent">("recycle");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [resultFilterQuery, setResultFilterQuery] = useState("");
   const [sortBy, setSortBy] = useState<"size" | "name">("size");
   const [domainFilter, setDomainFilter] = useState<string>("all");
 
-  // Modal & Reports
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [lastReport, setLastReport] = useState<CleanReport | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -116,7 +125,6 @@ export const App: React.FC = () => {
     return raw ? Number(raw) || 0 : 0;
   });
 
-  // Music state
   const [musicDir, setMusicDir] = useState<string | null>(null);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
 
@@ -179,17 +187,19 @@ export const App: React.FC = () => {
     });
   };
 
-  const applyScanResult = (res: FullScanResult) => {
+  const applyScanResult = useCallback((res: FullScanResult, autoSelectRecommended = true) => {
     setCategories(res.categories);
     setSmartSummary(res.summary);
     setDomainFilter("all");
+    setResultFilterQuery("");
 
-    // Smart auto-select ONLY explicitly recommended waste/junk items
     const nextSelected: Record<string, boolean> = {};
-    for (const cat of res.categories) {
-      for (const it of cat.items) {
-        if (it.recommendation === "recommend" && !it.requires_privilege) {
-          nextSelected[it.path] = true;
+    if (autoSelectRecommended) {
+      for (const cat of res.categories) {
+        for (const it of cat.items) {
+          if (it.recommendation === "recommend" && !it.requires_privilege) {
+            nextSelected[it.path] = true;
+          }
         }
       }
     }
@@ -199,7 +209,7 @@ export const App: React.FC = () => {
     if (firstNonEmpty) {
       setExpandedMap({ [firstNonEmpty.id]: true });
     }
-  };
+  }, []);
 
   const handleFullScan = async () => {
     if (isScanning || isCleaning) return;
@@ -208,7 +218,7 @@ export const App: React.FC = () => {
     setMood("scanning");
     try {
       const res = await invoke<FullScanResult>("start_full_scan");
-      applyScanResult(res);
+      applyScanResult(res, true);
       setMood("idle");
       showToast(
         `全盘智能盘点完成：识别 ${res.total_items} 项（共 ${formatBytes(
@@ -223,7 +233,54 @@ export const App: React.FC = () => {
     }
   };
 
-  const scanSpecificPath = async (targetPath: string, minMb = 10) => {
+  const handleWholeComputerSearch = async (overrideQuery?: string) => {
+    const q = (overrideQuery ?? globalQuery).trim();
+    if (!q) {
+      showToast("请输入要全电脑搜索的应用名、关键词或文件后缀（如 Anthropic, Claude）");
+      return;
+    }
+    if (isScanning || isCleaning) return;
+    if (overrideQuery !== undefined) setGlobalQuery(overrideQuery);
+
+    setIsScanning(true);
+    setLastReport(null);
+    setMood("scanning");
+    try {
+      const res = await invoke<FullScanResult>("search_whole_computer", {
+        query: q,
+        scope: searchScope,
+      });
+      applyScanResult(res, false);
+      const autoExp: Record<string, boolean> = {};
+      res.categories
+        .filter((c) => c.items.length > 0)
+        .slice(0, 3)
+        .forEach((c) => {
+          autoExp[c.id] = true;
+        });
+      setExpandedMap(autoExp);
+      setMood("idle");
+      showToast(
+        res.total_items > 0
+          ? `全电脑搜索「${q}」命中 ${res.total_items} 项，共 ${formatBytes(
+              res.total_bytes
+            )}（耗时 ${(res.duration_ms / 1000).toFixed(1)}s）`
+          : `未在选定范围找到与「${q}」匹配的文件或应用残留`
+      );
+    } catch (e) {
+      setMood("idle");
+      showToast(`全电脑搜索失败: ${String(e)}`);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleStopScan = () => {
+    invoke("cancel_scan").catch(() => {});
+    showToast("正在停止搜索并汇总已命中的结果...");
+  };
+
+  const scanSpecificPath = async (targetPath: string, minMb = 15) => {
     if (isScanning || isCleaning) return;
     setIsScanning(true);
     setLastReport(null);
@@ -233,7 +290,7 @@ export const App: React.FC = () => {
         targetDir: targetPath,
         minSizeMb: minMb,
       });
-      applyScanResult(res);
+      applyScanResult(res, true);
       setMood("idle");
       showToast(
         `已智能剖析 ${targetPath}：共归类 ${res.total_items} 项（${formatBytes(
@@ -295,22 +352,26 @@ export const App: React.FC = () => {
     [selectedItems]
   );
 
-  const toggleCategory = (cat: ScanCategoryResult) => {
-    const allChecked = cat.items.length > 0 && cat.items.every((it) => selectedPaths[it.path]);
+  const toggleCategory = useCallback((cat: ScanCategoryResult) => {
     setSelectedPaths((prev) => {
+      const allChecked = cat.items.length > 0 && cat.items.every((it) => prev[it.path]);
       const next = { ...prev };
       for (const it of cat.items) {
         next[it.path] = !allChecked;
       }
       return next;
     });
-  };
+  }, []);
 
-  const toggleItem = (path: string) => {
+  const toggleItem = useCallback((path: string) => {
     setSelectedPaths((prev) => ({ ...prev, [path]: !prev[path] }));
-  };
+  }, []);
 
-  const selectRecommendedOnly = () => {
+  const revealPath = useCallback((p: string) => {
+    invoke("reveal_in_explorer", { path: p }).catch(() => {});
+  }, []);
+
+  const selectRecommendedOnly = useCallback(() => {
     const next: Record<string, boolean> = {};
     for (const cat of categories) {
       for (const it of cat.items) {
@@ -321,7 +382,7 @@ export const App: React.FC = () => {
     }
     setSelectedPaths(next);
     showToast("已智能勾选所有「建议清理」废物与残留，个人生活与工作资料已自动跳过");
-  };
+  }, [categories, showToast]);
 
   const clearSelection = () => {
     setSelectedPaths({});
@@ -334,18 +395,18 @@ export const App: React.FC = () => {
     setExpandedMap(next);
   };
 
-  const focusCategory = (catId: string) => {
+  const focusCategory = useCallback((catId: string) => {
     setDomainFilter("all");
     setExpandedMap((prev) => ({ ...prev, [catId]: true }));
     window.setTimeout(() => {
       const el = document.getElementById(`cat-card-${catId}`);
       el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }, 60);
-  };
+    }, 40);
+  }, []);
 
   const openAuditFlow = () => {
     if (selectedItems.length === 0) {
-      showToast("请先勾选需要清理的缓存或文件");
+      showToast("请先勾选需要清理的缓存、残留或搜索结果");
       return;
     }
     setMood("auditing");
@@ -423,46 +484,43 @@ export const App: React.FC = () => {
   const useFloatingFrame = sysStatus?.window_chrome === "floating" && !isMaximized;
 
   const stageTitle = isScanning
-    ? scanProgress?.stage || "正在智能语义剖析磁盘..."
+    ? scanProgress?.stage || "正在智能剖析与全盘检索..."
     : isCleaning
     ? `正在清扫 (${cleanProgress?.processed ?? 0}/${cleanProgress?.total ?? 0})`
     : lastReport
     ? `本次已释放 ${formatBytes(lastReport.freed_bytes)}`
     : categories.length > 0
     ? `已选 ${selectedItems.length} 项 · 预计释放 ${formatBytes(selectedTotalBytes)}`
-    : "智能盘点全盘，惬意清扫空间";
+    : "智能盘点全盘 · 全电脑精准搜刮";
 
   const stageSub = isScanning
-    ? scanProgress?.current_path || "放大镜巡检并区分废物、娱乐、生活与工作区..."
+    ? scanProgress?.current_path || "放大镜高速检索各磁盘与应用目录中..."
     : isCleaning
     ? cleanProgress?.current_path || "小农夫和森林芽灵正在合力清扫垃圾..."
     : lastReport
     ? `模式：${lastReport.mode === "permanent" ? "直接彻底删除" : "移入系统回收站"} · 成功 ${
         lastReport.deleted_count
       } 项 · 跳过 ${lastReport.skipped_count} 项`
-    : "自动将文件划分为无用废物、缓存、娱乐、生活回忆与工作项目；个人资产与系统目录默认受保护。";
+    : "支持全盘 6 维语义盘点，也支持下方全电脑搜索指定应用残留（如 Anthropic / Claude）或大模型文件。";
 
   const win = getCurrentWindow();
 
   return (
     <div className={`window-outer ${useFloatingFrame ? "is-floating" : "is-docked"}`}>
       <div className={`app-shell theme-${theme} ${useFloatingFrame ? "rounded-chassis" : ""}`}>
-        {/* Ambient Liquid Glass Orbs + Subtle Sandblasted Grain */}
         <div className="ambient-mesh" aria-hidden>
           <span className="orb orb-1" />
           <span className="orb orb-2" />
           <span className="orb orb-3" />
         </div>
-        <div className="glass-noise-overlay" aria-hidden />
 
-        {/* Unified Translucent Titlebar */}
         <header className="titlebar" data-tauri-drag-region>
           <div className={`titlebar-left ${isMac ? "mac-inset" : ""}`} data-tauri-drag-region>
             <div className="brand-icon-wrap">
               <PixelBroomIcon size={18} />
             </div>
             <span className="brand-name">PixelSweep</span>
-            <span className="brand-badge">v1.3 智能版</span>
+            <span className="brand-badge">v1.4</span>
             {sysStatus && (
               <span className="brand-env">
                 {sysStatus.os === "windows" ? "Windows" : "macOS"} · {sysStatus.arch}
@@ -478,7 +536,7 @@ export const App: React.FC = () => {
             )}
 
             <button
-              className="glass-chip"
+              className="btn-subtle-pill"
               onClick={toggleTheme}
               title="切换浅霜玻璃 / 暗夜磨砂主题"
             >
@@ -504,14 +562,12 @@ export const App: React.FC = () => {
 
         {toastMsg && <div className="glass-toast">{toastMsg}</div>}
 
-        {/* Main Split Workspace */}
         <div className="workspace">
-          {/* Left Apple-Style Translucent Sidebar */}
           <aside className="sidebar">
             <div className="sidebar-section">
               <div className="section-head">
                 <span className="section-label">磁盘概览 · 点盘智能剖析</span>
-                <button className="tiny-icon-btn" onClick={refreshSystem} title="刷新磁盘容量">
+                <button className="btn-icon-ghost" onClick={refreshSystem} title="刷新磁盘容量">
                   <RefreshIcon size={12} />
                 </button>
               </div>
@@ -535,7 +591,7 @@ export const App: React.FC = () => {
                           scanSpecificPath(d.mount_point, 15);
                         }
                       }}
-                      title={`点击对 ${d.mount_point} 进行智能语义分区剖析`}
+                      title={`点击对 ${d.mount_point} 进行 6 维智能语义剖析`}
                     >
                       <div className="disk-top">
                         <span className="disk-mount">
@@ -543,7 +599,7 @@ export const App: React.FC = () => {
                           <strong>{d.mount_point}</strong>
                         </span>
                         <span className="disk-top-right">
-                          <span className="disk-scan-hint">智能剖析</span>
+                          <span className="disk-scan-hint">剖析</span>
                           <span className={`disk-pct ${pct > 85 ? "pct-high" : ""}`}>{pct}%</span>
                         </span>
                       </div>
@@ -580,10 +636,11 @@ export const App: React.FC = () => {
                   </div>
                 )}
                 <button
-                  className="btn-glass btn-full"
+                  className="btn-secondary btn-full"
                   onClick={() => invoke("open_permission_settings")}
                 >
-                  <PixelShieldAlertIcon size={15} /> 打开系统权限设置
+                  <PixelShieldAlertIcon size={15} />
+                  <span>打开系统权限设置</span>
                 </button>
               </div>
             </div>
@@ -591,32 +648,32 @@ export const App: React.FC = () => {
             <div className="sidebar-section">
               <span className="section-label">快捷工具</span>
               <button
-                className="btn-glass btn-full"
+                className="btn-secondary btn-full"
                 onClick={handleCustomFolderScan}
                 disabled={isScanning || isCleaning}
               >
-                <FolderVectorIcon size={14} /> 指定目录智能剖析
+                <FolderVectorIcon size={14} />
+                <span>指定目录智能剖析</span>
               </button>
               <button
-                className="btn-glass btn-full"
+                className="btn-secondary btn-full"
                 onClick={handleEmptyTrash}
                 disabled={isScanning || isCleaning}
               >
-                <PixelTrashIcon size={15} /> 清空系统回收站 / 废纸篓
+                <PixelTrashIcon size={15} />
+                <span>清空系统回收站 / 废纸篓</span>
               </button>
             </div>
           </aside>
 
-          {/* Right Primary Luminous Frosted Stage */}
           <main className="main-pane">
             {sysStatus && sysStatus.permission_warnings.length > 0 && (
               <div className="sys-warning-strip">
-                <PixelShieldAlertIcon size={17} />
+                <PixelShieldAlertIcon size={16} />
                 <div className="sys-warning-text">{sysStatus.permission_warnings[0]}</div>
               </div>
             )}
 
-            {/* Hero Pixel Diorama Panel */}
             <div className="hero-panel">
               <PixelFarmerStage
                 mood={mood}
@@ -632,7 +689,7 @@ export const App: React.FC = () => {
                   disabled={isScanning || isCleaning}
                 >
                   <PixelMagnifierIcon size={17} />
-                  <span>{isScanning ? "正在智能盘点..." : "一键全盘智能盘点"}</span>
+                  <span>{isScanning ? "正在扫描中..." : "一键全盘智能盘点"}</span>
                 </button>
                 <button
                   className="btn-accent btn-lg"
@@ -645,18 +702,91 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Real-time Scan Progress */}
+            <div className="spotlight-card">
+              <div className="spotlight-row">
+                <div className="spotlight-input-box">
+                  <SearchIcon size={15} className="spotlight-icon" />
+                  <input
+                    type="text"
+                    value={globalQuery}
+                    onChange={(e) => setGlobalQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleWholeComputerSearch();
+                    }}
+                    placeholder="全电脑搜刮指定应用残留或模型文件（多词用逗号隔开，如：Anthropic, Claude, .gguf）"
+                    className="spotlight-input"
+                  />
+                  {globalQuery && (
+                    <button
+                      type="button"
+                      className="btn-icon-ghost"
+                      onClick={() => setGlobalQuery("")}
+                      aria-label="清空搜索词"
+                    >
+                      <WinCloseIcon size={10} />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  className="scope-select"
+                  value={searchScope}
+                  onChange={(e) => setSearchScope(e.target.value)}
+                  disabled={isScanning || isCleaning}
+                  title="选择全电脑搜索范围"
+                >
+                  <option value="all">全电脑所有磁盘</option>
+                  <option value="apps">仅应用与用户目录 (极速)</option>
+                  {(sysStatus?.disks ?? []).map((d) => (
+                    <option key={d.mount_point} value={d.mount_point}>
+                      仅搜索 {d.mount_point}
+                    </option>
+                  ))}
+                </select>
+
+                {isScanning ? (
+                  <button type="button" className="btn-danger btn-md" onClick={handleStopScan}>
+                    停止检索
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-primary btn-md"
+                    disabled={isCleaning || !globalQuery.trim()}
+                    onClick={() => handleWholeComputerSearch()}
+                  >
+                    全电脑搜刮
+                  </button>
+                )}
+              </div>
+
+              <div className="spotlight-presets">
+                <span className="presets-label">快捷搜刮：</span>
+                {QUICK_SEARCH_PRESETS.map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    className="preset-chip"
+                    disabled={isScanning || isCleaning}
+                    onClick={() => handleWholeComputerSearch(p.query)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {isScanning && scanProgress && (
               <div className="progress-panel">
                 <div className="progress-track">
                   <div
                     className="progress-fill"
-                    style={{ width: `${scanProgress.progress_pct}%` }}
+                    style={{ width: `${Math.max(6, scanProgress.progress_pct)}%` }}
                   />
                 </div>
                 <div className="progress-caption">
                   <span>
-                    已归类 <strong>{scanProgress.found_items}</strong> 项 ·{" "}
+                    已命中 <strong>{scanProgress.found_items}</strong> 项 ·{" "}
                     <strong>{formatBytes(scanProgress.found_bytes)}</strong>
                   </span>
                   <span>{scanProgress.progress_pct}%</span>
@@ -664,7 +794,6 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            {/* Apple macOS Storage-Style Smart Semantic Breakdown Bar */}
             {categories.length > 0 && (
               <StorageBreakdownBar
                 categories={categories}
@@ -675,36 +804,15 @@ export const App: React.FC = () => {
               />
             )}
 
-            {/* Smart Domain Tabs & Search/Sort Toolbar */}
             {categories.length > 0 && (
               <div className="results-toolbar">
-                <div className="search-input-wrap">
-                  <SearchIcon size={13} className="search-icon" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="搜文件名、路径或智能诊断..."
-                    className="glass-search-input"
-                  />
-                  {searchQuery && (
-                    <button
-                      className="clear-search-btn"
-                      onClick={() => setSearchQuery("")}
-                      aria-label="清空搜索"
-                    >
-                      <WinCloseIcon size={10} />
-                    </button>
-                  )}
-                </div>
-
-                <div className="toolbar-actions">
+                <div className="toolbar-left-group">
                   <div className="segmented-control">
                     {(
                       [
                         ["all", "全部"],
                         ["junk", "废物"],
-                        ["dev_cache", "缓存"],
+                        ["dev_cache", "缓存/模型"],
                         ["entertainment", "娱乐"],
                         ["life", "生活"],
                         ["work", "工作"],
@@ -720,8 +828,21 @@ export const App: React.FC = () => {
                       </button>
                     ))}
                   </div>
+                </div>
 
-                  <div className="segmented-control">
+                <div className="toolbar-right-group">
+                  <div className="mini-filter-wrap">
+                    <SearchIcon size={12} className="search-icon" />
+                    <input
+                      type="text"
+                      value={resultFilterQuery}
+                      onChange={(e) => setResultFilterQuery(e.target.value)}
+                      placeholder="结果内筛选..."
+                      className="mini-filter-input"
+                    />
+                  </div>
+
+                  <div className="segmented-control compact">
                     <button
                       className={sortBy === "size" ? "seg-active" : ""}
                       onClick={() => setSortBy("size")}
@@ -736,27 +857,28 @@ export const App: React.FC = () => {
                     </button>
                   </div>
 
-                  <button className="btn-glass btn-xs" onClick={clearSelection}>
+                  <div className="toolbar-divider" />
+
+                  <button className="btn-ghost-xs" onClick={clearSelection}>
                     清空勾选
                   </button>
-                  <button className="btn-glass btn-xs" onClick={() => setAllExpanded(true)}>
+                  <button className="btn-ghost-xs" onClick={() => setAllExpanded(true)}>
                     全展
                   </button>
-                  <button className="btn-glass btn-xs" onClick={() => setAllExpanded(false)}>
+                  <button className="btn-ghost-xs" onClick={() => setAllExpanded(false)}>
                     全收
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Smart Categories List OR Pre-Scan Blueprint */}
             <div className="categories-wrap">
               {categories.length === 0 ? (
                 <div className="blueprint-stage">
                   <div className="blueprint-header">
                     <h3>智能文件语义剖析引擎 · 6 大分区维度</h3>
                     <p>
-                      点击「一键全盘智能盘点」全面诊断，或直接点击左侧任意盘符（C:\ / D:\ / F:\ / G:\）按生活、娱乐、工作与无用废物智能分类；个人高价值文件默认自动保护。
+                      可点击「一键全盘智能盘点」、点击左侧任意盘符直接剖析，或直接在上方「全电脑搜刮栏」输入应用名（如 Anthropic、Claude）全盘定位应用残留与大模型文件。
                     </p>
                   </div>
                   <div className="blueprint-grid">
@@ -787,8 +909,8 @@ export const App: React.FC = () => {
                     selectedPaths={selectedPaths}
                     onToggleCategory={() => toggleCategory(cat)}
                     onToggleItem={toggleItem}
-                    onReveal={(p) => invoke("reveal_in_explorer", { path: p })}
-                    searchQuery={searchQuery}
+                    onReveal={revealPath}
+                    searchQuery={resultFilterQuery}
                     sortBy={sortBy}
                   />
                 ))
@@ -797,7 +919,6 @@ export const App: React.FC = () => {
           </main>
         </div>
 
-        {/* Persistent Apple Music-Inspired Frosted Glass Dock */}
         <MusicDock
           musicDir={musicDir}
           tracks={tracks}
@@ -805,7 +926,6 @@ export const App: React.FC = () => {
           onPlayStateChange={setIsPlayingMusic}
         />
 
-        {/* Pre-Deletion Security Alarm & Audit Modal */}
         {showAuditModal && (
           <AuditModal
             items={selectedItems}

@@ -46,8 +46,6 @@ export const PixelFarmerStage: React.FC<PixelFarmerStageProps> = ({
     if (!ctx) return;
 
     let frame = 0;
-    let rafId = 0;
-    let lastTime = 0;
 
     const SCALE = 3; // 72x48 -> 216x144
     const px = (x: number, y: number, w: number, h: number, color: string) => {
@@ -346,34 +344,31 @@ export const PixelFarmerStage: React.FC<PixelFarmerStageProps> = ({
       }
     };
 
-    const render = (now: number) => {
-      if (now - lastTime >= 195) {
-        lastTime = now;
-        frame++;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        drawScenery(frame);
+    const drawFrame = () => {
+      frame++;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawScenery(frame);
 
-        let cx = 33;
-        let cy = 20;
-        if (mood === "scanning") {
-          cx = 26 + (frame % 8 < 4 ? frame % 4 : 4 - (frame % 4));
-        } else if (mood === "done") {
-          cy = 18 + (frame % 2) * 2;
-        } else if (mood === "idle" && isPlayingMusic) {
-          cy = 20 + (frame % 2);
-        }
-
-        const spiritX = mood === "scanning" || mood === "cleaning" ? 13 : 51;
-        drawSpiritHelper(spiritX, 34, frame);
-
-        drawFarmer(cx, cy, frame);
-        drawProps(cx, cy, frame);
+      let cx = 33;
+      let cy = 20;
+      if (mood === "scanning") {
+        cx = 26 + (frame % 8 < 4 ? frame % 4 : 4 - (frame % 4));
+      } else if (mood === "done") {
+        cy = 18 + (frame % 2) * 2;
+      } else if (mood === "idle" && isPlayingMusic) {
+        cy = 20 + (frame % 2);
       }
-      rafId = requestAnimationFrame(render);
+
+      const spiritX = mood === "scanning" || mood === "cleaning" ? 13 : 51;
+      drawSpiritHelper(spiritX, 34, frame);
+
+      drawFarmer(cx, cy, frame);
+      drawProps(cx, cy, frame);
     };
 
-    rafId = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(rafId);
+    drawFrame();
+    const timerId = window.setInterval(drawFrame, 210);
+    return () => window.clearInterval(timerId);
   }, [mood, theme, isPlayingMusic]);
 
   return (

@@ -177,7 +177,7 @@ export const MusicDock: React.FC<MusicDockProps> = ({
                 {musicDir || "未选择本地音乐文件夹"}
               </div>
             </div>
-            <button className="btn-glass btn-sm" onClick={onPickMusicFolder}>
+            <button className="btn-secondary btn-sm" onClick={onPickMusicFolder}>
               <FolderVectorIcon size={13} /> 更换目录
             </button>
           </div>
@@ -314,7 +314,7 @@ export const MusicDock: React.FC<MusicDockProps> = ({
               title="音量"
             />
           </div>
-          <button className="btn-glass btn-sm" onClick={onPickMusicFolder} title="加载本地音乐文件夹">
+          <button className="btn-secondary btn-sm" onClick={onPickMusicFolder} title="加载本地音乐文件夹">
             <FolderVectorIcon size={13} /> 音乐库
           </button>
         </div>

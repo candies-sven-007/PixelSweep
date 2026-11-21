@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ScanCategoryResult,
   ScannedItem,
@@ -28,6 +28,10 @@ interface CategoryAccordionProps {
   sortBy: "size" | "name";
 }
 
+const ROW_HEIGHT = 60;
+const VIEWPORT_MAX_H = 310;
+const OVERSCAN = 4;
+
 function getExtBadge(item: ScannedItem): string {
   if (item.is_dir) return "DIR";
   const parts = item.name.split(".");
@@ -38,7 +42,7 @@ function getExtBadge(item: ScannedItem): string {
   return "FILE";
 }
 
-export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
+const CategoryAccordionInner: React.FC<CategoryAccordionProps> = ({
   category,
   grandTotalBytes,
   isExpanded,
@@ -50,9 +54,16 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
   searchQuery,
   sortBy,
 }) => {
-  const [visibleLimit, setVisibleLimit] = useState(40);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  useEffect(() => {
+    setScrollTop(0);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [searchQuery, sortBy, isExpanded]);
 
   const filteredItems = useMemo(() => {
+    if (!isExpanded && !searchQuery.trim()) return category.items;
     const q = searchQuery.trim().toLowerCase();
     let list = category.items;
     if (q) {
@@ -63,36 +74,42 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
           it.ai_reason.toLowerCase().includes(q)
       );
     }
-    const sorted = [...list];
     if (sortBy === "name") {
-      sorted.sort((a, b) => a.name.localeCompare(b.name));
-    } else {
-      sorted.sort((a, b) => b.size_bytes - a.size_bytes);
+      return [...list].sort((a, b) => a.name.localeCompare(b.name));
     }
-    return sorted;
-  }, [category.items, searchQuery, sortBy]);
+    return list;
+  }, [category.items, isExpanded, searchQuery, sortBy]);
 
-  const checkedItems = useMemo(
-    () => category.items.filter((it) => selectedPaths[it.path]),
-    [category.items, selectedPaths]
-  );
+  const { checkedCount, checkedBytes } = useMemo(() => {
+    let cnt = 0;
+    let bytes = 0;
+    for (const it of category.items) {
+      if (selectedPaths[it.path]) {
+        cnt++;
+        bytes += it.size_bytes;
+      }
+    }
+    return { checkedCount: cnt, checkedBytes: bytes };
+  }, [category.items, selectedPaths]);
 
-  const checkedBytes = useMemo(
-    () => checkedItems.reduce((acc, it) => acc + it.size_bytes, 0),
-    [checkedItems]
-  );
+  const allChecked = category.items.length > 0 && checkedCount === category.items.length;
+  const someChecked = checkedCount > 0 && !allChecked;
 
-  const allChecked = category.items.length > 0 && checkedItems.length === category.items.length;
-  const someChecked = checkedItems.length > 0 && !allChecked;
-  const maxItemSize = useMemo(
-    () => Math.max(1, ...filteredItems.map((it) => it.size_bytes)),
-    [filteredItems]
-  );
+  const maxItemSize = useMemo(() => {
+    let max = 1;
+    for (const it of filteredItems) {
+      if (it.size_bytes > max) max = it.size_bytes;
+    }
+    return max;
+  }, [filteredItems]);
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
 
   const accentColor = getCategoryColor(category.domain);
   const sharePct =
     grandTotalBytes > 0 ? Math.min(100, Math.round((category.total_bytes / grandTotalBytes) * 100)) : 0;
-  const shownItems = filteredItems.slice(0, visibleLimit);
 
   const riskLabel =
     category.risk_level === "safe"
@@ -102,6 +119,15 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
       : category.risk_level === "elevated"
       ? "系统权限项"
       : "按需审视";
+
+  const totalHeight = filteredItems.length * ROW_HEIGHT;
+  const containerH = Math.min(VIEWPORT_MAX_H, Math.max(ROW_HEIGHT, totalHeight));
+  const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIdx = Math.min(
+    filteredItems.length,
+    Math.ceil((scrollTop + VIEWPORT_MAX_H) / ROW_HEIGHT) + OVERSCAN
+  );
+  const visibleSlice = isExpanded ? filteredItems.slice(startIdx, endIdx) : [];
 
   return (
     <div
@@ -126,7 +152,7 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
           {someChecked && <MinusIcon size={11} />}
         </button>
 
-        <div className="acc-icon-pill" style={{ background: `${accentColor}1f`, color: accentColor }}>
+        <div className="acc-icon-pill" style={{ background: `${accentColor}1c`, color: accentColor }}>
           <FolderVectorIcon size={16} />
         </div>
 
@@ -139,7 +165,7 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
             )}
           </div>
           <p className="acc-desc" title={category.description}>
-            {category.subtitle} · {category.description}
+            {category.subtitle}
           </p>
         </div>
 
@@ -154,7 +180,7 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                 />
               </div>
               <span className="acc-selected-meta">
-                {checkedItems.length}/{category.item_count}
+                {checkedCount}/{category.item_count}
               </span>
             </div>
           </div>
@@ -164,46 +190,52 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
         </div>
       </div>
 
-      <div className="acc-collapse-outer">
-        <div className="acc-collapse-inner">
-          <div className="acc-body">
-            <div className="acc-subbar">
-              <div className="roots-chips">
-                <span className="roots-label">识别来源</span>
-                {category.root_paths.slice(0, 2).map((rp) => (
-                  <span key={rp} className="root-chip" title={rp}>
-                    {rp}
-                  </span>
-                ))}
-                {category.root_paths.length > 2 && (
-                  <span className="root-chip">+{category.root_paths.length - 2} 处</span>
-                )}
-              </div>
-              <div className="subbar-right">
-                {checkedBytes > 0 && (
-                  <span className="subbar-selected">已选 {formatBytes(checkedBytes)}</span>
-                )}
-                {category.items.length > 0 && (
-                  <button
-                    type="button"
-                    className="btn-inline-toggle"
-                    onClick={onToggleCategory}
-                  >
-                    {allChecked ? "取消全选" : "全选本类"}
-                  </button>
-                )}
-              </div>
+      {isExpanded && (
+        <div className="acc-body">
+          <div className="acc-subbar">
+            <div className="roots-chips">
+              <span className="roots-label">识别来源</span>
+              {category.root_paths.slice(0, 2).map((rp) => (
+                <span key={rp} className="root-chip" title={rp}>
+                  {rp}
+                </span>
+              ))}
+              {category.root_paths.length > 2 && (
+                <span className="root-chip">+{category.root_paths.length - 2} 处</span>
+              )}
             </div>
+            <div className="subbar-right">
+              {checkedBytes > 0 && (
+                <span className="subbar-selected">已选 {formatBytes(checkedBytes)}</span>
+              )}
+              {category.items.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-ghost-xs"
+                  onClick={onToggleCategory}
+                >
+                  {allChecked ? "取消全选" : "全选本类"}
+                </button>
+              )}
+            </div>
+          </div>
 
-            {filteredItems.length === 0 ? (
-              <div className="acc-empty">
-                {searchQuery.trim()
-                  ? "当前搜索关键词下无匹配项"
-                  : "该语义分区下暂无发现大体积或可清理文件"}
-              </div>
-            ) : (
-              <div className="acc-items-scroll">
-                {shownItems.map((it) => {
+          {filteredItems.length === 0 ? (
+            <div className="acc-empty">
+              {searchQuery.trim()
+                ? "当前结果筛选关键词下无匹配项"
+                : "该语义分区下暂无发现大体积或可清理文件"}
+            </div>
+          ) : (
+            <div
+              ref={scrollRef}
+              className="acc-virtual-scroll"
+              style={{ height: `${containerH + 12}px` }}
+              onScroll={handleScroll}
+            >
+              <div className="acc-virtual-spacer" style={{ height: `${totalHeight}px` }}>
+                {visibleSlice.map((it, localIdx) => {
+                  const actualIdx = startIdx + localIdx;
                   const isChecked = !!selectedPaths[it.path];
                   const ratioPct = Math.max(
                     4,
@@ -215,7 +247,11 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                   return (
                     <div
                       key={it.path}
-                      className={`acc-item-row ${isChecked ? "item-checked" : ""}`}
+                      className={`acc-item-row virtual-row ${isChecked ? "item-checked" : ""}`}
+                      style={{
+                        transform: `translate3d(0, ${actualIdx * ROW_HEIGHT}px, 0)`,
+                        height: `${ROW_HEIGHT - 4}px`,
+                      }}
                       onClick={() => onToggleItem(it.path)}
                     >
                       <button
@@ -252,9 +288,12 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                             <span className="priv-badge">需系统权限</span>
                           )}
                         </div>
-                        <div className="item-ai-reason">{it.ai_reason}</div>
-                        <div className="item-path-text" title={it.path}>
-                          {it.path}
+                        <div className="item-sub-meta">
+                          <span className="item-ai-reason">{it.ai_reason}</span>
+                          <span className="item-path-sep">·</span>
+                          <span className="item-path-text" title={it.path}>
+                            {it.path}
+                          </span>
                         </div>
                       </div>
 
@@ -270,7 +309,7 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
 
                       <button
                         type="button"
-                        className="item-locate-btn"
+                        className="btn-icon-ghost"
                         title="在文件夹中定位查看"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -282,21 +321,13 @@ export const CategoryAccordion: React.FC<CategoryAccordionProps> = ({
                     </div>
                   );
                 })}
-
-                {filteredItems.length > visibleLimit && (
-                  <button
-                    type="button"
-                    className="load-more-btn"
-                    onClick={() => setVisibleLimit((v) => v + 60)}
-                  >
-                    展开剩余 {filteredItems.length - visibleLimit} 项...
-                  </button>
-                )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 };
+
+export const CategoryAccordion = memo(CategoryAccordionInner);

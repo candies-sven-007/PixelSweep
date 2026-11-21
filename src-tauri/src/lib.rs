@@ -73,6 +73,25 @@ async fn scan_custom_folder(
     .map_err(|e| format!("智能剖析线程异常: {}", e))?
 }
 
+
+#[tauri::command]
+async fn search_whole_computer(
+    app: AppHandle,
+    query: String,
+    scope: String,
+) -> Result<FullScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scanner::search_whole_computer(&app, &query, &scope)
+    })
+    .await
+    .map_err(|e| format!("全电脑搜索线程异常: {}", e))?
+}
+
+#[tauri::command]
+fn cancel_scan() {
+    scanner::request_cancel_scan();
+}
+
 #[tauri::command]
 async fn execute_cleanup(
     app: AppHandle,
@@ -169,6 +188,8 @@ pub fn run() {
             get_system_status,
             start_full_scan,
             scan_custom_folder,
+            search_whole_computer,
+            cancel_scan,
             execute_cleanup,
             empty_trash,
             load_local_music,

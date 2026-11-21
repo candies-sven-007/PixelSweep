@@ -30,8 +30,6 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| haystack.contains(n))
 }
 
-/// Skip core OS / system protected directories during broad drive traversal
-/// so full-drive smart analysis stays fast and never touches kernel binaries.
 pub fn should_skip_during_broad_scan(path: &Path) -> bool {
     let s = path.to_string_lossy().to_lowercase();
     let norm = s.replace('\\', "/");
@@ -87,8 +85,59 @@ pub fn should_skip_during_broad_scan(path: &Path) -> bool {
     false
 }
 
-/// Check if a directory should be collapsed as a single cleanable/auditable unit
-/// rather than recursing into tens of thousands of tiny files.
+pub fn should_skip_during_search(path: &Path) -> bool {
+    let s = path.to_string_lossy().to_lowercase();
+    let norm = s.replace('\\', "/");
+
+    let skip_segments = [
+        "/$recycle.bin",
+        "/system volume information",
+        "/windows/system32",
+        "/windows/syswow64",
+        "/windows/winsxs",
+        "/windows/servicing",
+        "/windows/installer",
+        "/windows/assembly",
+        "/windows/microsoft.net",
+        "/program files/windowsapps",
+        "/programdata/microsoft/windows defender",
+        "/recovery",
+        "/config.msi",
+        "/system/volumes",
+        "/system/library",
+        "/private/var/vm",
+        "/usr/",
+        "/bin/",
+        "/sbin/",
+        "/dev/",
+        "/cores/",
+        "/.git/objects",
+    ];
+    if skip_segments.iter().any(|seg| norm.contains(seg)) {
+        return true;
+    }
+
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        let lower = name.to_lowercase();
+        if matches!(
+            lower.as_str(),
+            "$recycle.bin"
+                | "system volume information"
+                | "winsxs"
+                | "system32"
+                | "syswow64"
+                | ".spotlight-v100"
+                | ".fseventsd"
+                | ".trashes"
+                | ".git"
+        ) {
+            return true;
+        }
+    }
+
+    false
+}
+
 pub fn is_collapsible_dir_name(name_lower: &str) -> bool {
     matches!(
         name_lower,
@@ -114,8 +163,6 @@ pub fn is_collapsible_dir_name(name_lower: &str) -> bool {
     )
 }
 
-/// Local intelligent heuristic classifier:
-/// Analyzes path semantics, app fingerprints, file extension, age, size, and naming patterns.
 pub fn classify_entry(
     path: &Path,
     is_dir: bool,
@@ -138,9 +185,10 @@ pub fn classify_entry(
     let days = age_days(modified_ts);
     let elevated = is_elevated_path(path);
 
-    // 0. System elevated paths always trigger elevated warning
     if elevated || forced_domain == Some("system_elevated") {
-        let reason = if norm.contains("softwaredistribution") {
+        let reason = if norm.contains("program files") || norm.starts_with("/applications/") {
+            "位于系统程序安装目录（卸载/清理前需管理员权限审视）".to_string()
+        } else if norm.contains("softwaredistribution") {
             "Windows 更新下载缓存（清理前需管理员权限审核）".to_string()
         } else if norm.contains("/library/caches") || norm.contains("/library/logs") {
             "macOS 系统全局缓存/日志（涉及系统权限，清理前报警）".to_string()
@@ -158,9 +206,27 @@ pub fn classify_entry(
         };
     }
 
-    // 1. Forced junk / dev_cache from dedicated cache scans
+    let is_ai_model_ext = matches!(
+        ext.as_str(),
+        "gguf" | "safetensors" | "onnx" | "pt" | "pth" | "ckpt" | "ggml" | "mlx" | "mlmodel"
+    ) || (ext == "bin"
+        && (size_bytes >= 50 * 1024 * 1024
+            || contains_any(
+                &norm,
+                &["model", "ollama", "huggingface", "lmstudio", "anthropic", "claude", "llm", "weights"],
+            )));
+    if is_ai_model_ext {
+        return Classification {
+            domain: "dev_cache",
+            recommendation: "review",
+            risk_level: "caution",
+            ai_reason: "AI 模型权重 / 本地大模型推理文件（体积较大，不用时可释放大量空间）".to_string(),
+            requires_privilege: false,
+        };
+    }
+
     if forced_domain == Some("junk") {
-        let reason = if norm.contains("chrome") || norm.contains("edge") || norm.contains("firefox") || norm.contains("brave") {
+        let reason = if contains_any(&norm, &["chrome", "edge", "firefox", "brave"]) {
             "浏览器静态网页缓存（不触碰密码、书签与登录态）".to_string()
         } else if norm.contains("crash") || ext == "dmp" {
             "程序闪退崩溃转储/诊断报告（可安全回收）".to_string()
@@ -195,9 +261,11 @@ pub fn classify_entry(
         };
     }
 
-    // 2. Directory-level smart rules (stale node_modules / target / cache folders)
     if is_dir {
-        if matches!(name_lower.as_str(), "node_modules" | "target" | ".gradle" | "deriveddata" | "__pycache__" | ".next") {
+        if matches!(
+            name_lower.as_str(),
+            "node_modules" | "target" | ".gradle" | "deriveddata" | "__pycache__" | ".next"
+        ) {
             if days >= 30 {
                 return Classification {
                     domain: "dev_cache",
@@ -224,9 +292,17 @@ pub fn classify_entry(
                 requires_privilege: false,
             };
         }
+        if contains_any(&norm, &["/appdata/", "/library/application support/", "/library/containers/"]) {
+            return Classification {
+                domain: "dev_cache",
+                recommendation: "review",
+                risk_level: "caution",
+                ai_reason: "应用程序配置、本地数据或卸载残留目录（确认已卸载或重置后再删）".to_string(),
+                requires_privilege: false,
+            };
+        }
     }
 
-    // 3. Junk & Obsolete Waste detection (Temp files, duplicate copies, stale installers)
     if matches!(
         ext.as_str(),
         "tmp" | "temp" | "bak" | "old" | "chk" | "dmp" | "log" | "crdownload" | "part" | "download"
@@ -245,14 +321,13 @@ pub fn classify_entry(
         };
     }
 
-    // Obsolete installers in Downloads / Desktop / Data drives
     if matches!(ext.as_str(), "exe" | "msi" | "dmg" | "pkg" | "msix" | "cab" | "apk" | "ipa") {
         let in_dl_or_desk = contains_any(&norm, &["/downloads/", "/desktop/", "/下载/", "/桌面/"]);
         if in_dl_or_desk || contains_any(&name_lower, &["setup", "install", "installer", "update", "pack"]) {
             let reason = if days >= 7 {
                 format!("已静置 {} 天的残留安装包（大概率已安装完毕，建议清理）", days)
             } else {
-                "下载目录中的软件安装包（安装完成后即可释放）".to_string()
+                "软件安装包（安装完成后即可释放空间）".to_string()
             };
             return Classification {
                 domain: "junk",
@@ -264,7 +339,6 @@ pub fn classify_entry(
         }
     }
 
-    // Duplicate copy files like "report (1).pdf", "photo - 副本.jpg"
     let looks_duplicate = name_lower.contains("(1).")
         || name_lower.contains("(2).")
         || name_lower.contains("(3).")
@@ -281,7 +355,6 @@ pub fn classify_entry(
         };
     }
 
-    // Old large archives in Downloads (often unpacked and forgotten)
     if matches!(ext.as_str(), "zip" | "rar" | "7z" | "tar" | "gz" | "xz" | "iso") {
         if contains_any(&norm, &["/downloads/", "/下载/"]) && (days >= 14 || size_bytes >= 100 * 1024 * 1024) {
             return Classification {
@@ -297,7 +370,6 @@ pub fn classify_entry(
         }
     }
 
-    // 4. Entertainment (Games, Movies/Anime, Music, Ebooks/Comics)
     let is_game_path = contains_any(
         &norm,
         &[
@@ -319,7 +391,6 @@ pub fn classify_entry(
         ext.as_str(),
         "mp4" | "mkv" | "avi" | "mov" | "flv" | "wmv" | "webm" | "rmvb" | "ts" | "m4v"
     ) {
-        // Distinguish personal phone/camera videos vs entertainment/movies/screen recordings
         if contains_any(&norm, &["/dcim/", "/camera/", "/pictures/", "/相册/", "/照片/", "wechat"]) {
             return Classification {
                 domain: "life",
@@ -329,16 +400,15 @@ pub fn classify_entry(
                 requires_privilege: false,
             };
         }
-        let reason = if size_bytes >= 300 * 1024 * 1024 {
-            "超大体积影音/番剧/录屏文件（观影完毕后可按需释放）".to_string()
-        } else {
-            "娱乐视频、番剧或媒体素材（默认不勾选，按需清理）".to_string()
-        };
         return Classification {
             domain: "entertainment",
             recommendation: "review",
             risk_level: "caution",
-            ai_reason: reason,
+            ai_reason: if size_bytes >= 300 * 1024 * 1024 {
+                "超大体积影音/番剧/录屏文件（观影完毕后可按需释放）".to_string()
+            } else {
+                "娱乐视频、番剧或媒体素材（默认不勾选，按需清理）".to_string()
+            },
             requires_privilege: false,
         };
     }
@@ -363,7 +433,6 @@ pub fn classify_entry(
         };
     }
 
-    // 5. Life, Photos & Personal Memories (Protected by default)
     if matches!(
         ext.as_str(),
         "jpg" | "jpeg" | "png" | "heic" | "webp" | "gif" | "bmp" | "raw" | "cr2" | "arw" | "dng" | "nef"
@@ -384,13 +453,12 @@ pub fn classify_entry(
         };
     }
 
-    // 6. Work, Study & Creative Projects (Protected by default)
     if matches!(
         ext.as_str(),
         "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "md" | "txt" | "csv" | "rtf"
             | "xmind" | "key" | "pages" | "numbers" | "psd" | "ai" | "fig" | "sketch" | "prproj"
             | "aep" | "blend" | "dwg" | "c4d" | "py" | "rs" | "ts" | "tsx" | "js" | "java" | "cpp"
-            | "sql" | "db" | "sqlite"
+            | "sql" | "db" | "sqlite" | "json" | "yaml" | "yml" | "toml"
     ) || contains_any(&norm, &["/documents/", "/文档/", "/工作/", "/学习/", "/作业/", "/课件/", "/project", "/code/"])
     {
         return Classification {
@@ -400,13 +468,12 @@ pub fn classify_entry(
             ai_reason: if matches!(ext.as_str(), "psd" | "ai" | "prproj" | "aep" | "blend" | "c4d") {
                 "设计/剪辑工程源文件（重要创作资产，默认保护）".to_string()
             } else {
-                "工作文档、学习资料或代码工程文件（默认保护防误删）".to_string()
+                "工作文档、学习资料、配置或代码工程文件（默认保护防误删）".to_string()
             },
             requires_privilege: false,
         };
     }
 
-    // Fallback for miscellaneous archives / unrecognized large blobs
     if matches!(ext.as_str(), "zip" | "rar" | "7z" | "tar" | "gz" | "iso") {
         return Classification {
             domain: "work",
@@ -418,10 +485,14 @@ pub fn classify_entry(
     }
 
     Classification {
-        domain: "junk",
+        domain: if is_dir { "dev_cache" } else { "junk" },
         recommendation: "review",
         risk_level: "caution",
-        ai_reason: "未归类大体积文件（建议点击右侧「定位」查看后再处理）".to_string(),
+        ai_reason: if is_dir {
+            "匹配的应用或数据文件夹（建议点击定位查看内容后再处理）".to_string()
+        } else {
+            "未归类文件（建议点击右侧定位查看用途后再决定）".to_string()
+        },
         requires_privilege: false,
     }
 }
